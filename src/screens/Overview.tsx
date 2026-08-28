@@ -1,0 +1,93 @@
+import type { Service, Snapshot } from '../types';
+import { formatBytes, formatCpu, isDualStack, primaryPort } from '../lib/format';
+import { Icon } from '../components/Icon';
+import { PageHeader, PortBadge, SectionLabel, StatTile, StatusDot } from '../components/ui';
+
+interface Props {
+  snapshot: Snapshot;
+  onSelect: (id: string) => void;
+}
+
+export function Overview({ snapshot, onSelect }: Props) {
+  const { services, ports, conflicts } = snapshot;
+
+  const totalMemory = services.reduce((sum, s) => sum + s.memoryBytes, 0);
+  const totalCpu = services.reduce((sum, s) => sum + s.cpuPercent, 0);
+  const dualStackCount = services.filter((s) => isDualStack(s.endpoints)).length;
+  const distinctPorts = new Set(ports.map((p) => p.port)).size;
+
+  return (
+    <div className="ld-fade-in overflow-auto px-6 py-5">
+      <PageHeader title="Overview" subtitle="Everything you own that is listening on this machine." />
+
+      <div className="mt-[18px] mb-[22px] grid grid-cols-4 gap-3">
+        <StatTile
+          label="SERVICES"
+          value={String(services.length)}
+          sub={`${new Set(services.map((s) => s.processName)).size} distinct runtimes`}
+          tone="ac"
+        />
+        <StatTile
+          label="LISTENING PORTS"
+          value={String(distinctPorts)}
+          sub={`${ports.length} sockets, ${dualStackCount} dual-stack`}
+        />
+        {/* null until the backend computes it — "—", never a confident 0. */}
+        <StatTile
+          label="CONFLICTS"
+          value={conflicts === null ? '—' : String(conflicts)}
+          sub={
+            conflicts === null
+              ? 'detection not implemented'
+              : conflicts === 0
+                ? 'no duplicate binds'
+                : 'ports bound twice'
+          }
+          tone={conflicts === 0 ? 'grn' : undefined}
+        />
+        <StatTile label="MEMORY" value={formatBytes(totalMemory)} sub={`${formatCpu(totalCpu)} CPU across services`} />
+      </div>
+
+      <div className="mb-[9px] flex items-baseline gap-2.5">
+        <SectionLabel>RUNNING</SectionLabel>
+        <span className="h-px flex-1 bg-bd" />
+      </div>
+
+      <div className="overflow-hidden rounded-[9px] border border-bd bg-surf">
+        {services.map((s) => (
+          <OverviewRow key={s.id} service={s} onSelect={onSelect} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OverviewRow({ service, onSelect }: { service: Service; onSelect: (id: string) => void }) {
+  const port = primaryPort(service.endpoints);
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(service.id)}
+      className="group flex h-[52px] w-full items-center gap-[13px] border-b border-bd px-3.5 text-left transition-colors last:border-b-0 hover:bg-sel"
+    >
+      <StatusDot />
+      <div className="w-[186px]">
+        <div className="text-[13px] font-medium">{service.label}</div>
+        <div className="mt-0.5 text-[11px] text-t3">{service.framework ?? service.processName}</div>
+      </div>
+      {port !== null && <PortBadge port={port} />}
+      <span className="flex-1" />
+      <span className="w-24 font-mono text-[11.5px] text-t3">{service.processName}</span>
+      <span className="w-[52px] font-mono text-[11.5px] text-t3 tabular-nums">{service.pid}</span>
+      <span className="w-[46px] text-right font-mono text-[11.5px] text-t2 tabular-nums">
+        {formatCpu(service.cpuPercent)}
+      </span>
+      <span className="w-[66px] text-right font-mono text-[11.5px] text-t1 tabular-nums">
+        {formatBytes(service.memoryBytes)}
+      </span>
+      <span className="w-[18px] text-t3 opacity-0 transition-opacity group-hover:opacity-100">
+        <Icon name="chevron" size={14} />
+      </span>
+    </button>
+  );
+}

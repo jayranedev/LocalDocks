@@ -1,0 +1,177 @@
+/**
+ * Domain types shared with the Rust backend.
+ *
+ * These are the IPC contract. Keep them in sync with the `serde` structs in
+ * src-tauri/src/models/ — a change here without a change there is a runtime
+ * failure, not a compile error.
+ */
+
+export type Protocol = 'TCP' | 'UDP';
+
+/** One listening socket. A service may hold several (IPv4 + IPv6 is routine). */
+export interface Endpoint {
+  protocol: Protocol;
+  /** Presentation form: "127.0.0.1" or "[::1]". */
+  address: string;
+  port: number;
+}
+
+/**
+ * A field the backend may legitimately fail to read.
+ *
+ * LocalDocks never elevates, so any process owned by another account will
+ * refuse OpenProcess for its executable path, command line and working
+ * directory. Encoding that in the type means the UI cannot silently render a
+ * denial as an empty string — it has to handle the case.
+ */
+export type FieldState<T> =
+  | { kind: 'ok'; value: T }
+  | { kind: 'denied' }
+  | { kind: 'unavailable' };
+
+/**
+ * Process identity: `${pid}-${startedAt}`.
+ *
+ * A bare PID is not an identity — Windows recycles them. Pairing it with the
+ * process creation time is what makes a row safe to act on, and it is the key
+ * every detail lookup and destructive command is addressed by.
+ */
+export type ProcessId = string;
+
+export function makeProcessId(pid: number, startedAt: string): ProcessId {
+  return `${pid}-${startedAt}`;
+}
+
+/**
+ * Tier 1 — cheap, refreshed on every sampler tick.
+ *
+ * A Service is a process holding at least one listening socket on a
+ * non-system port, owned by the current user.
+ */
+export interface Service {
+  id: ProcessId;
+  /** Friendly name, derived from the endpoint or the process. */
+  label: string;
+  /** "Vite · React", "Uvicorn · FastAPI" — null until project detection (V2). */
+  framework: string | null;
+  processName: string;
+  pid: number;
+  parentPid: number;
+  cpuPercent: number;
+  memoryBytes: number;
+  threadCount: number;
+  /** Process creation time, ISO-8601. See ProcessId. */
+  startedAt: string;
+  uptimeSeconds: number;
+  endpoints: Endpoint[];
+  status: 'running' | 'stopped';
+}
+
+/**
+ * A row in the Processes view. Every process the current user owns.
+ *
+ * Carries the same identity as Service, because a Service *is* a process —
+ * that is what lets all three screens share one detail panel and one
+ * verified-terminate path.
+ */
+export interface ProcessRow {
+  id: ProcessId;
+  pid: number;
+  parentPid: number;
+  name: string;
+  cpuPercent: number;
+  memoryBytes: number;
+  threadCount: number;
+  startedAt: string;
+  uptimeSeconds: number;
+  status: 'running' | 'sleeping';
+  /** True when this process also appears in Services. */
+  isService: boolean;
+}
+
+/** A row in the Ports view. One row per socket, deliberately unmerged. */
+export interface PortRow {
+  port: number;
+  protocol: Protocol;
+  address: string;
+  pid: number;
+  /**
+   * Identity of the owning process, or null when the backend could not
+   * attribute the socket (another account's process, or it exited mid-scan).
+   * Null means the row is informational only — no actions offered.
+   */
+  processId: ProcessId | null;
+  processName: string;
+  serviceLabel: string | null;
+  state: 'LISTENING';
+}
+
+/** Tier 2 — expensive. Fetched when a detail panel opens, never in the scan loop. */
+export interface ProcessDetail {
+  processId: ProcessId;
+  executable: FieldState<string>;
+  commandLine: FieldState<string>;
+  workingDirectory: FieldState<string>;
+}
+
+/** Everything one sampler tick produces. */
+export interface Snapshot {
+  /** Monotonic tick counter. */
+  sequence: number;
+  /** When the sampler completed this scan, ISO-8601. */
+  capturedAt: string;
+  services: Service[];
+  processes: ProcessRow[];
+  ports: PortRow[];
+  /**
+   * Ports bound by more than one PID.
+   *
+   * `null` means the backend does not compute this yet — the UI renders "—"
+   * rather than a confident 0. Conflict detection is V2 (§B); this field
+   * exists so the day Rust starts sending a number, nothing here changes.
+   */
+  conflicts: number | null;
+}
+
+/** What the UI is currently showing. */
+export type LoadState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; snapshot: Snapshot }
+  | { kind: 'empty'; snapshot: Snapshot }
+  /**
+   * A scan failed. `stale` is the last good snapshot, if there was one — the
+   * UI keeps rendering it behind a warning rather than blanking. Null means
+   * the very first scan failed and there is nothing to show.
+   */
+  | { kind: 'error'; message: string; detail: string; stale: Snapshot | null };
+
+/**
+ * Payload for `terminate_process`.
+ *
+ * Both fields are required. The backend re-opens the PID, reads its creation
+ * time, and refuses if it does not match — so a recycled PID cannot be killed
+ * by a stale row in the UI.
+ */
+export interface TerminateRequest {
+  pid: number;
+  startedAt: string;
+}
+
+export type TerminateResult =
+  | { kind: 'terminated' }
+  | { kind: 'stale'; message: string }
+  | { kind: 'denied' }
+  | { kind: 'failed'; message: string };
+
+export type ScreenId =
+  | 'overview'
+  | 'services'
+  | 'processes'
+  | 'ports'
+  | 'projects'
+  | 'logs'
+  | 'docker'
+  | 'wsl'
+  | 'settings';
+
+export type Theme = 'system' | 'light' | 'dark';

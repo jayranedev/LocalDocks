@@ -1,0 +1,75 @@
+# ==============================================================
+# LocalDocks
+# ==============================================================
+
+# --------------------------------------------------------------
+# Dependencies
+# --------------------------------------------------------------
+node_modules/
+
+# --------------------------------------------------------------
+# Frontend build output (Vite)
+# --------------------------------------------------------------
+dist/
+dist-ssr/
+*.local
+
+# --------------------------------------------------------------
+# Rust / Cargo build output
+#
+# src-tauri/target/ is the important one. A debug Tauri build is
+# typically 2-5 GB. Committing it once would permanently bloat the
+# history that section 15 requires us to audit before going public.
+#
+# NOTE: Cargo.lock is deliberately NOT ignored. LocalDocks is a
+# binary, not a library, so pinning exact dependency versions gives
+# reproducible builds - which the security posture in section 12
+# depends on.
+# --------------------------------------------------------------
+src-tauri/target/
+**/*.rs.bk
+
+# --------------------------------------------------------------
+# Tauri generated
+# --------------------------------------------------------------
+src-tauri/gen/
+.tauri/
+
+# --------------------------------------------------------------
+# Secrets
+#
+# Nothing secret should ever exist in this repo. This block exists
+# so that the failure mode is "file is ignored" rather than "file is
+# committed", per SECURITY.md and the pre-open-source audit.
+# --------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+
+# --------------------------------------------------------------
+# Editors / IDE
+# --------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# --------------------------------------------------------------
+# OS
+# --------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# --------------------------------------------------------------
+# Logs / test output
+# --------------------------------------------------------------
+*.log
+npm-debug.log*
+coverage/

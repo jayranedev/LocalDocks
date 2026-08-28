@@ -1,0 +1,64 @@
+# ==============================================================
+# LocalDocks - line ending and diff behaviour
+#
+# Without this file, line endings depend on each contributor's local
+# core.autocrlf setting. That produces phantom whole-file diffs where
+# nothing actually changed - which is exactly what happens today when
+# this repo is read from a non-Windows environment.
+#
+# Rule: normalize to LF inside the repository, check out native on
+# Windows. Existing commits are already LF, so this is a no-op for
+# current files and simply makes the behaviour explicit and portable.
+# ==============================================================
+
+* text=auto
+
+# --------------------------------------------------------------
+# Files that MUST keep a specific ending regardless of platform
+# --------------------------------------------------------------
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+*.sh    text eol=lf
+
+# --------------------------------------------------------------
+# Explicit text types
+# --------------------------------------------------------------
+*.rs    text
+*.toml  text
+*.ts    text
+*.tsx   text
+*.js    text
+*.jsx   text
+*.json  text
+*.html  text
+*.css   text
+*.md    text
+*.yml   text
+*.yaml  text
+
+# --------------------------------------------------------------
+# Binary - never normalize, never diff
+# --------------------------------------------------------------
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.exe   binary
+*.dll   binary
+*.msi   binary
+
+# --------------------------------------------------------------
+# Lockfiles
+#
+# linguist-generated collapses these in GitHub PR views so they don't
+# drown a review. Deliberately NOT marked -diff: dependency changes
+# must stay readable for the security review in section 12.
+# --------------------------------------------------------------
+package-lock.json   linguist-generated=true
+Cargo.lock          linguist-generated=true
