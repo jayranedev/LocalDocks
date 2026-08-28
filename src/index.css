@@ -1,0 +1,187 @@
+@import 'tailwindcss';
+
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+/*
+  Design tokens.
+
+  Defined as plain CSS custom properties so the theme can be swapped at
+  runtime, then exposed to Tailwind through `@theme inline` — which is what
+  makes `bg-surf`, `text-t2`, `border-bd` work while still resolving through
+  the live variable.
+
+  Dark is the base. Light overrides only the values, never the names.
+*/
+:root {
+  --c-bg: #131519;
+  --c-elev: #181b20;
+  --c-surf: #1c2026;
+  --c-surf-hi: #22272e;
+  --c-bd: #262b33;
+  --c-bd-hi: #333a44;
+  --c-sel: #1e2830;
+  --c-t1: #e6e9ee;
+  --c-t2: #9aa3b0;
+  --c-t3: #6b7481;
+  --c-ac: #3fb6c8;
+  --c-grn: #4ec98a;
+  --c-red: #f0616d;
+  --c-amb: #e6a94a;
+  --c-skel: #20252c;
+  --c-scrim: rgb(9 11 14 / 0.72);
+  --shadow-panel: 0 16px 48px rgb(0 0 0 / 0.55);
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --c-bg: #f6f7f9;
+  --c-elev: #ffffff;
+  --c-surf: #ffffff;
+  --c-surf-hi: #f1f3f6;
+  --c-bd: #e3e7ed;
+  --c-bd-hi: #cdd4dd;
+  --c-sel: #e8eef1;
+  --c-t1: #171b21;
+  --c-t2: #59626f;
+  --c-t3: #8a94a1;
+  --c-ac: #1a8fa3;
+  --c-grn: #17945c;
+  --c-red: #cf3b49;
+  --c-amb: #a9741a;
+  --c-skel: #eceff3;
+  --c-scrim: rgb(28 34 42 / 0.34);
+  --shadow-panel: 0 16px 48px rgb(31 41 55 / 0.18);
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-elev: var(--c-elev);
+  --color-surf: var(--c-surf);
+  --color-surfhi: var(--c-surf-hi);
+  --color-bd: var(--c-bd);
+  --color-bdhi: var(--c-bd-hi);
+  --color-sel: var(--c-sel);
+  --color-t1: var(--c-t1);
+  --color-t2: var(--c-t2);
+  --color-t3: var(--c-t3);
+  --color-ac: var(--c-ac);
+  --color-grn: var(--c-grn);
+  --color-red: var(--c-red);
+  --color-amb: var(--c-amb);
+  --color-skel: var(--c-skel);
+
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-t1);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* A desktop app window is not a document — no text selection drag, no bounce. */
+button,
+[role='button'] {
+  user-select: none;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--c-bd-hi);
+  border: 3px solid var(--c-bg);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-t3);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes ld-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ld-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes ld-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes ld-slide-in {
+  from {
+    transform: translateX(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes ld-pop-in {
+  from {
+    transform: scale(0.97);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.ld-spin {
+  animation: ld-spin 0.7s linear infinite;
+}
+.ld-skeleton {
+  animation: ld-pulse 1.4s ease-in-out infinite;
+}
+.ld-fade-in {
+  animation: ld-fade-in 0.14s ease-out;
+}
+.ld-slide-in {
+  animation: ld-slide-in 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ld-pop-in {
+  animation: ld-pop-in 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ld-spin,
+  .ld-skeleton,
+  .ld-fade-in,
+  .ld-slide-in,
+  .ld-pop-in {
+    animation: none;
+  }
+}
