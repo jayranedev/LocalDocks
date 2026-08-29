@@ -31,6 +31,12 @@ pub enum SystemError {
         code: u32,
         message: String,
     },
+    /// A URL was refused before it could reach the shell.
+    ///
+    /// Carries the reason so the caller sees which rule it broke rather than a
+    /// bare "invalid URL". See `logic::url`.
+    #[serde(rename_all = "camelCase")]
+    RejectedUrl { reason: String },
     /// A caller asked the sampler to run at a cadence it will not run at.
     ///
     /// Carries the bounds rather than a sentence about them, so the caller can
@@ -54,6 +60,12 @@ impl SystemError {
         }
     }
 
+    pub fn rejected_url(reason: impl Into<String>) -> Self {
+        Self::RejectedUrl {
+            reason: reason.into(),
+        }
+    }
+
     pub fn invalid_interval(requested_ms: u64, min_ms: u64, max_ms: u64) -> Self {
         Self::InvalidInterval {
             requested_ms,
@@ -71,6 +83,7 @@ impl std::fmt::Display for SystemError {
                 code,
                 message,
             } => write!(f, "{call} failed (0x{code:08X}): {message}"),
+            Self::RejectedUrl { reason } => write!(f, "URL refused: {reason}"),
             Self::InvalidInterval {
                 requested_ms,
                 min_ms,
@@ -106,6 +119,16 @@ mod tests {
             e.to_string(),
             "OpenProcess failed (0x80070005): Access denied"
         );
+    }
+
+    #[test]
+    fn a_rejected_url_carries_the_rule_it_broke() {
+        let e = SystemError::rejected_url("only http:// and https:// URLs can be opened");
+        let v = serde_json::to_value(&e).unwrap();
+
+        assert_eq!(v["kind"], "rejectedUrl");
+        assert_eq!(v["reason"], "only http:// and https:// URLs can be opened");
+        assert!(e.to_string().starts_with("URL refused:"));
     }
 
     #[test]

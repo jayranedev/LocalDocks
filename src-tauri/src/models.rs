@@ -167,6 +167,73 @@ pub struct Snapshot {
     pub conflicts: Option<u32>,
 }
 
+/// TS: `type FieldState<T>`
+///
+/// A tier-2 field is not a string that might be empty — it is a value, a
+/// refusal, or an absence, and the three are different facts. docs/BACKEND.md:
+/// "AccessDenied is a value, not an error." This is where that value lands.
+///
+/// Internally tagged so the JSON matches the TypeScript union exactly:
+/// `{"kind":"ok","value":"..."}`, `{"kind":"denied"}`, `{"kind":"unavailable"}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum FieldState<T> {
+    Ok {
+        value: T,
+    },
+    /// The process is owned by another account. Renders as "Requires
+    /// elevation" — and LocalDocks does not elevate.
+    Denied,
+    /// Not readable: the process went away, the identity no longer matches, or
+    /// this Windows build does not expose the field. Never used to mean "the
+    /// value happens to be empty".
+    Unavailable,
+}
+
+/// TS: `interface ProcessDetail` — tier 2, fetched when a panel opens.
+///
+/// Never produced by the sampler. docs/ARCHITECTURE.md § 4 keeps these fields
+/// out of the scan loop because they are expensive and awkward on Windows.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessDetail {
+    pub process_id: ProcessId,
+    pub executable: FieldState<String>,
+    pub command_line: FieldState<String>,
+    pub working_directory: FieldState<String>,
+}
+
+impl ProcessDetail {
+    /// Every field in the same state.
+    ///
+    /// Used when the failure is about the process rather than the field: a
+    /// refused open denies all three, a stale identity makes all three
+    /// unavailable. Filling them in one at a time would imply the fields were
+    /// tried individually.
+    pub fn all(process_id: ProcessId, state: FieldState<String>) -> Self {
+        Self {
+            process_id,
+            executable: state.clone(),
+            command_line: state.clone(),
+            working_directory: state,
+        }
+    }
+}
+
+/// TS: `type TerminateResult`
+///
+/// `Stale` is a success path, not a failure: it means the identity check
+/// refused to kill a recycled PID (docs/BACKEND.md, "IdentityMismatch is a
+/// success path for the safety model working").
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum TerminateResult {
+    Terminated,
+    Stale { message: String },
+    Denied,
+    Failed { message: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

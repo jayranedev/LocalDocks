@@ -73,7 +73,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
-            commands::set_sample_interval
+            commands::set_sample_interval,
+            commands::get_process_detail,
+            commands::terminate_process,
+            commands::open_external
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
