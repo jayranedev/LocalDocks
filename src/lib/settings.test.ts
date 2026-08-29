@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, THEMES, THEME_LABELS, __test } from './settings';
+import { DEFAULT_SETTINGS, MODES, THEMES, THEME_LABELS, __test } from './settings';
 
 /**
  * Only the validation is covered. Stored JSON is hand-editable and survives
@@ -19,9 +19,10 @@ describe('settings coercion', () => {
   });
 
   it('accepts a valid stored object', () => {
-    expect(coerce({ theme: 'dark', intervalMs: 2000 })).toEqual({
+    expect(coerce({ theme: 'dark', intervalMs: 2000, mode: 'system' })).toEqual({
       theme: 'dark',
       intervalMs: 2000,
+      mode: 'system',
     });
   });
 
@@ -41,6 +42,7 @@ describe('settings coercion', () => {
     expect(coerce({ theme: 'solarized', intervalMs: 500 })).toEqual({
       theme: DEFAULT_SETTINGS.theme,
       intervalMs: 500,
+      mode: DEFAULT_SETTINGS.mode,
     });
   });
 
@@ -61,10 +63,40 @@ describe('settings coercion', () => {
     expect(coerce({ theme: 'light', intervalMs: 17 })).toEqual({
       theme: 'light',
       intervalMs: DEFAULT_SETTINGS.intervalMs,
+      mode: DEFAULT_SETTINGS.mode,
     });
     expect(coerce({ theme: 'light', intervalMs: '1000' })).toEqual({
       theme: 'light',
       intervalMs: DEFAULT_SETTINGS.intervalMs,
+      mode: DEFAULT_SETTINGS.mode,
+    });
+  });
+
+  it('defaults to Developer mode', () => {
+    expect(DEFAULT_SETTINGS.mode).toBe('developer');
+    expect(coerce({}).mode).toBe('developer');
+  });
+
+  it('accepts both modes', () => {
+    for (const mode of MODES) {
+      expect(coerce({ mode }).mode).toBe(mode);
+    }
+  });
+
+  it('rejects an unknown mode without discarding the rest', () => {
+    expect(coerce({ theme: 'light', intervalMs: 500, mode: 'wizard' })).toEqual({
+      theme: 'light',
+      intervalMs: 500,
+      mode: DEFAULT_SETTINGS.mode,
+    });
+  });
+
+  it('reads a settings file written before the mode existed', () => {
+    // The common case on first run after an update: no `mode` key at all.
+    expect(coerce({ theme: 'dark', intervalMs: 2000 })).toEqual({
+      theme: 'dark',
+      intervalMs: 2000,
+      mode: 'developer',
     });
   });
 
@@ -72,6 +104,7 @@ describe('settings coercion', () => {
     expect(coerce({ theme: 'dark', intervalMs: 1000, rogue: true })).toEqual({
       theme: 'dark',
       intervalMs: 1000,
+      mode: DEFAULT_SETTINGS.mode,
     });
   });
 });

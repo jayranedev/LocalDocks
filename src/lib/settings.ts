@@ -1,4 +1,4 @@
-import type { Theme } from '../types';
+import type { AppMode, Theme } from '../types';
 
 /**
  * Persisted settings.
@@ -17,12 +17,18 @@ const KEY = 'localdocks.settings.v1';
 export interface Settings {
   theme: Theme;
   intervalMs: number;
+  mode: AppMode;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'local-dark',
   intervalMs: 1000,
+  /* Developer is the default: the app is for watching your own services, and
+     the full machine view is one switch away. */
+  mode: 'developer',
 };
+
+export const MODES: AppMode[] = ['system', 'developer'];
 
 export const THEMES: Theme[] = ['local-dark', 'dark', 'light'];
 export const INTERVALS = [500, 1000, 2000, 5000];
@@ -53,7 +59,13 @@ function coerce(raw: unknown): Settings {
     ? (obj.intervalMs as number)
     : DEFAULT_SETTINGS.intervalMs;
 
-  return { theme, intervalMs };
+  // Absent in settings written before the mode existed, which is the common
+  // case on first run after an update — it falls through to the default.
+  const mode = MODES.includes(obj.mode as AppMode)
+    ? (obj.mode as AppMode)
+    : DEFAULT_SETTINGS.mode;
+
+  return { theme, intervalMs, mode };
 }
 
 export function loadSettings(): Settings {

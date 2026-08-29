@@ -59,7 +59,8 @@
   --danger-contrast: #1A0507;  /* text on solid danger */
   --focus: #5A9BFF;  /* keyboard focus ring */
   --disabled: #4A576B;
-  --skeleton: #18212E;  /* loading placeholders */
+  --skeleton: #18212E;
+  --switch-thumb: #EAF3FA;  /* the mode switch thumb: a light material in every theme */  /* loading placeholders */
 
   --soft-mix: 15%;
   --scrim: rgb(3 6 11 / 0.74);
@@ -87,7 +88,8 @@
   --danger-contrast: #1A0507;  /* text on solid danger */
   --focus: #7DA2D9;  /* keyboard focus ring */
   --disabled: #55575E;
-  --skeleton: #222327;  /* loading placeholders */
+  --skeleton: #222327;
+  --switch-thumb: #F0F1F3;  /* the mode switch thumb: a light material in every theme */  /* loading placeholders */
 
   --soft-mix: 14%;
   --scrim: rgb(6 6 8 / 0.72);
@@ -115,7 +117,8 @@
   --danger-contrast: #FFFFFF;  /* text on solid danger */
   --focus: #1D4ED8;  /* keyboard focus ring */
   --disabled: #98A2B0;
-  --skeleton: #DAE1EA;  /* loading placeholders */
+  --skeleton: #DAE1EA;
+  --switch-thumb: #FFFFFF;  /* the mode switch thumb: a light material in every theme */  /* loading placeholders */
 
   --soft-mix: 12%;
   --scrim: rgb(24 31 42 / 0.32);
@@ -224,6 +227,34 @@ button,
   outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/*
+  The Developer/System switch.
+
+  The sliding is here rather than in the component so `prefers-reduced-motion`
+  can remove it in one place. The thumb keeps its position either way — motion
+  is the flourish, position is the information.
+*/
+.ld-switch {
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+.ld-switch-thumb {
+  background: var(--switch-thumb);
+  transform: translateY(-50%);
+  transition: left 0.22s cubic-bezier(0.32, 1.25, 0.5, 1);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.28),
+    0 0 0 0.5px rgb(0 0 0 / 0.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ld-switch,
+  .ld-switch-thumb {
+    transition: none;
+  }
 }
 
 /* Disabled controls, expressed once. */

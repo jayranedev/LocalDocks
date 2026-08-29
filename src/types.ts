@@ -186,3 +186,13 @@ export type ScreenId =
  * must stay in sync with the blocks in `src/index.css`.
  */
 export type Theme = 'local-dark' | 'dark' | 'light';
+
+/**
+ * The global presentation mode.
+ *
+ * Developer narrows the view to services and the processes around them;
+ * System shows everything the backend can observe. It is a *view* setting: the
+ * Snapshot the backend produces is identical either way, and all narrowing
+ * happens in one place (`src/lib/view.ts`).
+ */
+export type AppMode = 'developer' | 'system';

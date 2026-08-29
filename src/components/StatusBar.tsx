@@ -1,7 +1,13 @@
+import type { AppMode } from '../types';
 import { BACKEND } from '../lib/ipc';
+import { MODE_LABELS } from '../lib/view';
 import { Icon } from './Icon';
 
 interface StatusBarProps {
+  /** The active presentation mode, so the current view is never ambiguous. */
+  mode: AppMode;
+  /** What the mode is holding back, counted from the same view model. */
+  hidden: { processes: number; ports: number };
   serviceCount: number;
   /** null while the backend does not compute conflicts — renders "—", not "0". */
   conflicts: number | null;
@@ -12,7 +18,7 @@ interface StatusBarProps {
   error: { message: string; detail: string } | null;
 }
 
-export function StatusBar({ serviceCount, conflicts, age, intervalMs, error }: StatusBarProps) {
+export function StatusBar({ mode, hidden, serviceCount, conflicts, age, intervalMs, error }: StatusBarProps) {
   return (
     <footer className="flex h-[30px] flex-none items-center gap-3.5 border-t border-border bg-surface-raised px-3.5 text-[11.5px] text-muted">
       <span className="flex items-center gap-[7px]">
@@ -27,6 +33,17 @@ export function StatusBar({ serviceCount, conflicts, age, intervalMs, error }: S
         title={conflicts === null ? 'Conflict detection is not implemented yet' : undefined}
       >
         {conflicts === null ? '— conflicts' : `${conflicts} conflicts`}
+      </span>
+
+      <span
+        className={mode === 'developer' ? 'text-accent' : undefined}
+        title={
+          mode === 'developer'
+            ? `Developer mode — ${hidden.processes} processes and ${hidden.ports} sockets hidden`
+            : 'System mode — nothing hidden'
+        }
+      >
+        {MODE_LABELS[mode]}
       </span>
 
       <div className="flex-1" />
