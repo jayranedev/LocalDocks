@@ -43,6 +43,20 @@ export function makeProcessId(pid: number, startedAt: string): ProcessId {
 }
 
 /**
+ * What the Developer Registry made of a service.
+ *
+ * Three outcomes, not two. `unknown` is the default and it is a real answer:
+ * the registry is not exhaustive, so a service it has never seen is reported
+ * as unrecognised rather than guessed into one of the other two.
+ *
+ * Developer mode shows `developer` and nothing else. `system` and `unknown`
+ * both hide, but they stay distinct because they are different claims — "this
+ * is Spotify" versus "this has not been classified" — and only the second
+ * means the registry has a gap worth filing.
+ */
+export type Relevance = 'developer' | 'system' | 'unknown';
+
+/**
  * Tier 1 — cheap, refreshed on every sampler tick.
  *
  * A Service is a process holding at least one listening socket on a
@@ -65,6 +79,14 @@ export interface Service {
   uptimeSeconds: number;
   endpoints: Endpoint[];
   status: 'running' | 'stopped';
+  /** What the Developer Registry made of this service. */
+  relevance: Relevance;
+  /**
+   * One sentence naming the rule that produced `relevance` — a registry entry,
+   * a matched command-line signature, or the absence of both. Never empty: a
+   * classification the user cannot check is one they cannot correct.
+   */
+  relevanceReason: string;
 }
 
 /**
@@ -153,6 +175,12 @@ export interface Snapshot {
   conflicts: number | null;
   /** Machine-wide load for this tick. */
   system: SystemTelemetry;
+  /**
+   * Which version of the Developer Registry classified the services in this
+   * snapshot. Shipped so a classification someone disagrees with can be pinned
+   * to a specific version of the tables rather than to "the app".
+   */
+  registryVersion: number;
 }
 
 /** What the UI is currently showing. */
@@ -212,9 +240,11 @@ export type Theme = 'local-dark' | 'dark' | 'light';
 /**
  * The global presentation mode.
  *
- * Developer narrows the view to services and the processes around them;
- * System shows everything the backend can observe. It is a *view* setting: the
- * Snapshot the backend produces is identical either way, and all narrowing
- * happens in one place (`src/lib/view.ts`).
+ * Developer shows the services the Developer Registry classified as
+ * development work, the processes that own them and the sockets they hold —
+ * and nothing else. System shows everything the backend can observe.
+ *
+ * It is a *view* setting: the Snapshot the backend produces is identical
+ * either way, and all narrowing happens in one place (`src/lib/view.ts`).
  */
 export type AppMode = 'developer' | 'system';

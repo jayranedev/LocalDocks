@@ -170,6 +170,38 @@ pub fn process_detail(process_id: &ProcessId, pid: u32, started_at: &str) -> Pro
     }
 }
 
+/// The command line of a verified process, for the Developer classifier.
+///
+/// A deliberate, bounded amendment to the two-tier rule in
+/// docs/ARCHITECTURE.md § 4, which otherwise keeps command lines out of the
+/// scan loop. Three things keep it honest:
+///
+///   * **Only services, and only undecidable ones.** `classify::needs_command_line`
+///     asks for a handle only where the answer could change the verdict —
+///     a general-purpose runtime. A dedicated program is already decided by its
+///     name; an excluded one is already refused. On the machine this was
+///     measured against that is a single process, out of ~390.
+///   * **Once per process lifetime.** The sampler caches the result against the
+///     process identity, so a service that lives for an hour is read once, not
+///     3,600 times. A failure is cached too, so an unreadable process is not
+///     retried every tick.
+///   * **Same verification as everything else.** It goes through
+///     `open_verified`, so a recycled PID yields nothing rather than the wrong
+///     process's command line — which would mean the wrong classification.
+///
+/// `None` for every failure. The classifier distinguishes "no command line"
+/// from "no signature in it", and both are reported honestly to the user.
+pub fn command_line_for(pid: u32, started_at: &str) -> Option<String> {
+    let handle = match open_verified(pid, started_at, PROCESS_QUERY_LIMITED_INFORMATION.0) {
+        Opened::Verified(h) => h,
+        _ => return None,
+    };
+    match read_command_line(&handle, pid) {
+        FieldState::Ok { value } => Some(value),
+        _ => None,
+    }
+}
+
 /// Full path of the running image.
 fn read_executable(handle: &OwnedHandle, pid: u32) -> FieldState<String> {
     let mut buffer = [0u16; MAX_PATH as usize];
@@ -508,6 +540,25 @@ mod tests {
             FieldState::Ok { value } => assert_eq!(value, "ab"),
             other => panic!("expected ok, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_sampler_facing_command_line_read_verifies_identity_like_everything_else() {
+        let pid = std::process::id();
+        let actual = match open_verified(pid, "wrong", PROCESS_QUERY_LIMITED_INFORMATION.0) {
+            Opened::IdentityMismatch { actual } => actual,
+            other => panic!("expected a mismatch, got {}", describe(&other)),
+        };
+
+        // A correct identity reads something, or nothing on a Windows build
+        // that does not answer the class — but never another process's line.
+        if let Some(line) = command_line_for(pid, &actual) {
+            assert!(!line.trim().is_empty());
+        }
+
+        // A stale identity and a dead PID both yield nothing.
+        assert!(command_line_for(pid, "2000-01-01T00:00:00.000Z").is_none());
+        assert!(command_line_for(0xFFFF_FFF0, &actual).is_none());
     }
 
     fn describe(o: &Opened) -> String {

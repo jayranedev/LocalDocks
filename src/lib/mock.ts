@@ -3,6 +3,7 @@ import type {
   ProcessDetail,
   ProcessRow,
   Protocol,
+  Relevance,
   Service,
   Snapshot,
   SystemTelemetry,
@@ -34,6 +35,17 @@ interface Seed {
   threads: number;
   startedAt: string;
   ports: Array<{ port: number; address: string }>;
+  /**
+   * What the mock claims the Developer Registry concluded.
+   *
+   * The real classification happens in Rust against a live command line; this
+   * is a fixed stand-in so the mock exercises all three outcomes. Two of the
+   * seeds are deliberately *not* development work, because a mock in which
+   * Developer and System mode look identical would hide the bug this whole
+   * layer exists to prevent.
+   */
+  relevance: Relevance;
+  relevanceReason: string;
   /** Simulates a process owned by another account. */
   denied?: boolean;
   executable?: string;
@@ -56,6 +68,8 @@ const SEEDS: Seed[] = [
     memMb: 142,
     threads: 18,
     startedAt: ago(4342),
+    relevance: 'developer',
+    relevanceReason: 'Node.js launched with the Vite signature.',
     ports: [
       { port: 5173, address: '127.0.0.1' },
       { port: 5173, address: '[::1]' },
@@ -75,6 +89,8 @@ const SEEDS: Seed[] = [
     memMb: 318,
     threads: 11,
     startedAt: ago(4180),
+    relevance: 'developer',
+    relevanceReason: 'Python launched with the Uvicorn signature.',
     ports: [{ port: 8000, address: '127.0.0.1' }],
     executable: 'C:\\Users\\jay\\.venvs\\shopfront\\Scripts\\python.exe',
     commandLine: 'python -m uvicorn app.main:app --reload --port 8000',
@@ -91,6 +107,8 @@ const SEEDS: Seed[] = [
     memMb: 126,
     threads: 7,
     startedAt: ago(4166),
+    relevance: 'developer',
+    relevanceReason: 'Python launched with the Celery signature.',
     ports: [{ port: 8001, address: '127.0.0.1' }],
     executable: 'C:\\Users\\jay\\.venvs\\shopfront\\Scripts\\python.exe',
     commandLine: 'celery -A app.worker worker --loglevel=info',
@@ -107,6 +125,8 @@ const SEEDS: Seed[] = [
     memMb: 210,
     threads: 14,
     startedAt: ago(1560),
+    relevance: 'developer',
+    relevanceReason: 'Node.js launched with the Storybook signature.',
     ports: [
       { port: 6006, address: '127.0.0.1' },
       { port: 6006, address: '[::1]' },
@@ -126,6 +146,8 @@ const SEEDS: Seed[] = [
     memMb: 421,
     threads: 9,
     startedAt: ago(273_600),
+    relevance: 'developer',
+    relevanceReason: 'postgres.exe launched with a registered development signature.',
     ports: [{ port: 5432, address: '127.0.0.1' }],
     denied: true,
   },
@@ -140,15 +162,51 @@ const SEEDS: Seed[] = [
     memMb: 38,
     threads: 5,
     startedAt: ago(273_600),
+    relevance: 'developer',
+    relevanceReason: 'redis-server.exe launched with a registered development signature.',
     ports: [{ port: 6379, address: '127.0.0.1' }],
     executable: 'C:\\Program Files\\Redis\\redis-server.exe',
     commandLine: 'redis-server.exe --port 6379',
     workingDirectory: 'C:\\Program Files\\Redis',
   },
+  {
+    id: 'spotify',
+    label: 'Spotify',
+    framework: null,
+    processName: 'Spotify.exe',
+    pid: 12640,
+    parentPid: 1,
+    cpu: 0.6,
+    memMb: 412,
+    threads: 52,
+    startedAt: ago(7400),
+    relevance: 'system',
+    relevanceReason: 'Spotify is a media application.',
+    ports: [{ port: 57621, address: '0.0.0.0' }],
+    executable: 'C:\\Program Files\\WindowsApps\\Spotify.exe',
+    commandLine: 'Spotify.exe',
+  },
+  {
+    id: 'editor',
+    label: 'Code',
+    framework: null,
+    processName: 'Code.exe',
+    pid: 4820,
+    parentPid: 1,
+    cpu: 4.1,
+    memMb: 886,
+    threads: 64,
+    startedAt: ago(9200),
+    relevance: 'unknown',
+    relevanceReason:
+      'code is in neither the developer nor the system registry, so it is not classified.',
+    ports: [{ port: 23674, address: '127.0.0.1' }],
+    executable: 'C:\\Users\\jay\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe',
+    commandLine: 'Code.exe --type=utility --utility-sub-type=node.mojom.NodeService',
+  },
 ];
 
 const EXTRA_PROCESSES = [
-  { pid: 4820, parentPid: 1, name: 'Code.exe', cpu: 4.1, memMb: 886, threads: 64, startedAt: ago(9200) },
   { pid: 6104, parentPid: 4820, name: 'pwsh.exe', cpu: 0.0, memMb: 62, threads: 6, startedAt: ago(8600) },
   { pid: 9312, parentPid: 8420, name: 'esbuild.exe', cpu: 0.0, memMb: 44, threads: 4, startedAt: ago(4300) },
 ];
@@ -182,6 +240,8 @@ export function buildSnapshot(): Snapshot {
     uptimeSeconds: (now - new Date(s.startedAt).getTime()) / 1000,
     endpoints: s.ports.map((p) => ({ protocol: TCP, address: p.address, port: p.port })),
     status: 'running',
+    relevance: s.relevance,
+    relevanceReason: s.relevanceReason,
   }));
 
   const processes: ProcessRow[] = [
@@ -238,6 +298,7 @@ export function buildSnapshot(): Snapshot {
     // null, not 0 — the UI must not claim "no conflicts" on no evidence.
     conflicts: null,
     system: telemetry(),
+    registryVersion: 1,
   };
 }
 

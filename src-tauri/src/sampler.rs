@@ -31,19 +31,37 @@
 //! change or a shutdown takes effect at once instead of after the current sleep
 //! expires. That is also what makes shutdown prompt.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::errors::SystemError;
+use crate::logic::classify;
 use crate::logic::cpu::CpuTracker;
 use crate::logic::ports::map_ports;
 use crate::logic::process::map_processes;
+use crate::logic::registry::REGISTRY_VERSION;
 use crate::logic::service::join_services;
 use crate::logic::telemetry::SystemCpuTracker;
-use crate::models::{Snapshot, SystemTelemetry};
+use crate::models::{ProcessId, Snapshot, SystemTelemetry};
 use crate::platform;
 use crate::time;
+
+/// Command lines the classifier needs, keyed by process identity.
+///
+/// `None` records a read that failed, so it is not retried on every tick. The
+/// key is the full identity rather than a bare PID, which is what stops a
+/// recycled PID from inheriting the previous process's classification.
+pub type CommandLines = HashMap<ProcessId, Option<String>>;
+
+/// How a tick obtains a command line.
+///
+/// A function rather than a direct call so `advance` stays testable without
+/// Windows: production passes the real reader, tests pass a closure. This is
+/// the only seam of its kind in the sampler and it exists for exactly this
+/// reason — the alternative is an untestable classification path.
+pub type CommandLineReader<'a> = dyn Fn(u32, &str) -> Option<String> + 'a;
 
 /// Fastest cadence the sampler will accept.
 ///
@@ -87,6 +105,9 @@ struct State {
     cpu: CpuTracker,
     /// Previous machine-wide and per-core CPU counters, for the same reason.
     system_cpu: SystemCpuTracker,
+    /// Command lines already read, pruned to live services every tick so it
+    /// cannot grow with the machine's uptime.
+    command_lines: CommandLines,
     /// Monotonic tick counter for `Snapshot.sequence`.
     sequence: u64,
     /// Current cadence. Read by the wait, written by `set_sample_interval`.
@@ -120,6 +141,7 @@ impl Sampler {
                     snapshot: empty_snapshot(),
                     cpu: CpuTracker::new(logical_cores),
                     system_cpu: SystemCpuTracker::new(),
+                    command_lines: CommandLines::new(),
                     sequence: 0,
                     interval,
                     running: false,
@@ -220,7 +242,13 @@ where
         let event = match scanned {
             Ok((raw, endpoints)) => {
                 let mut state = lock(&shared.state);
-                let snapshot = advance(&mut state, captured_at_millis, &raw, &endpoints);
+                let snapshot = advance(
+                    &mut state,
+                    captured_at_millis,
+                    &raw,
+                    &endpoints,
+                    &platform::windows::control::command_line_for,
+                );
                 drop(state);
                 SamplerEvent::Update(snapshot)
             }
@@ -259,9 +287,10 @@ where
 
 /// Fold one successful scan into state and produce the snapshot for it.
 ///
-/// Both scans arrive as data, so the invariants that matter — sequence
-/// increases, timestamps progress, ports attribute to processes from the same
-/// tick — are unit-testable without Windows.
+/// Both scans arrive as data, and the command-line read arrives as a function,
+/// so every invariant that matters — sequence increases, timestamps progress,
+/// ports attribute to processes from the same tick, services are classified —
+/// is unit-testable without Windows.
 ///
 /// The one exception is `read_telemetry`, which queries the machine directly.
 /// It is not injected because there is nothing to inject *for*: it has no
@@ -274,6 +303,7 @@ fn advance(
     captured_at_millis: i64,
     raw: &[platform::windows::process::RawProcess],
     endpoints: &[platform::windows::ports::RawEndpoint],
+    read_command_line: &CommandLineReader<'_>,
 ) -> Snapshot {
     state.sequence += 1;
 
@@ -305,20 +335,69 @@ fn advance(
 
     let ports = map_ports(endpoints, raw, &mapping.rows, join.labels());
 
+    // Relevance, in three steps that stay on the right side of the pure/impure
+    // line: decide who needs a command line (pure), read the ones that are
+    // missing (the only syscalls here), then classify (pure).
+    let mut services = join.services;
+    refresh_command_lines(state, &services, read_command_line);
+    classify::apply(&mut services, &state.command_lines);
+    debug_assert!(
+        services.iter().all(|s| !s.relevance_reason.is_empty()),
+        "a service reached a snapshot without being classified"
+    );
+
     let snapshot = Snapshot {
         sequence: state.sequence,
         captured_at: time::to_iso8601(captured_at_millis),
-        services: join.services,
+        services,
         processes: mapping.rows,
         ports,
         // Conflict detection is a later milestone (docs/ROADMAP.md). `None`
         // renders as "—" rather than as a confident zero.
         conflicts: None,
         system: read_telemetry(state),
+        registry_version: REGISTRY_VERSION,
     };
 
     state.snapshot = snapshot.clone();
     snapshot
+}
+
+/// Top up the command-line cache, and drop what is no longer running.
+///
+/// The bounded half of the tier-2 amendment (docs/ARCHITECTURE.md § 4). Two
+/// bounds, both structural rather than a limit someone has to remember:
+///
+///   * **Width.** Only services, and only those whose classification a command
+///     line could actually change — `classify::needs_command_line`. Everything
+///     else is decided by name.
+///   * **Time.** Keyed by identity and read once. A service that has been up
+///     for an hour costs one handle, not one per tick, and a read that failed
+///     is remembered as a failure rather than retried forever.
+///
+/// The prune is what keeps the map bounded by *what is running now* rather than
+/// by how long the app has been open.
+fn refresh_command_lines(
+    state: &mut State,
+    services: &[crate::models::Service],
+    read: &CommandLineReader<'_>,
+) {
+    let mut wanted = std::collections::HashSet::with_capacity(services.len());
+
+    for service in services {
+        if !classify::needs_command_line(service) {
+            continue;
+        }
+        wanted.insert(service.id.clone());
+        if state.command_lines.contains_key(&service.id) {
+            continue; // already known, including a known failure
+        }
+        let line = read(service.pid, &service.started_at);
+        state.command_lines.insert(service.id.clone(), line);
+    }
+
+    // Anything not wanted this tick has stopped being a service or has exited.
+    state.command_lines.retain(|id, _| wanted.contains(id));
 }
 
 /// Machine-wide load for this tick.
@@ -389,6 +468,7 @@ fn empty_snapshot() -> Snapshot {
             logical_processors: logical_cores(),
             ..SystemTelemetry::default()
         },
+        registry_version: REGISTRY_VERSION,
     }
 }
 
@@ -417,6 +497,15 @@ mod tests {
     fn has_unique_identities(snapshot: &Snapshot) -> bool {
         let mut seen = HashSet::with_capacity(snapshot.processes.len());
         snapshot.processes.iter().all(|p| seen.insert(&p.id))
+    }
+
+    /// A command-line reader that always fails.
+    ///
+    /// The default for tests that are not about classification: it exercises
+    /// the "command line unreadable" path, which is the conservative one — no
+    /// service can be promoted to Developer by accident.
+    fn no_command_lines(_pid: u32, _started_at: &str) -> Option<String> {
+        None
     }
 
     const T0: i64 = 1_787_907_600_000;
@@ -450,6 +539,7 @@ mod tests {
             snapshot: empty_snapshot(),
             cpu: CpuTracker::new(4),
             system_cpu: SystemCpuTracker::new(),
+            command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
             running: false,
@@ -457,6 +547,131 @@ mod tests {
     }
 
     // ------------------------------------------------ against the real machine
+
+    /// A full tick against this machine, classified, with the report printed.
+    ///
+    /// Fabricated inputs cannot catch the failure this whole correction pass
+    /// exists for: a rule that looks disciplined on paper and still sweeps in
+    /// half the desktop. So this runs the real thing — a real process scan, a
+    /// real socket scan, real command lines — and asserts the properties that
+    /// must hold on any machine, not the specific services on this one.
+    ///
+    /// `cargo test -- --nocapture real_machine` prints the classification of
+    /// every live service with the reason that produced it.
+    #[test]
+    fn a_real_tick_classifies_every_service_and_promotes_nothing_excluded() {
+        let raw = platform::windows::process::enumerate().expect("process scan");
+        let endpoints = platform::windows::ports::enumerate().expect("socket scan");
+
+        let mut s = State {
+            snapshot: empty_snapshot(),
+            cpu: CpuTracker::new(logical_cores()),
+            system_cpu: SystemCpuTracker::new(),
+            command_lines: CommandLines::new(),
+            sequence: 0,
+            interval: Duration::from_millis(1000),
+            running: false,
+        };
+        let snapshot = advance(
+            &mut s,
+            time::now_unix_millis(),
+            &raw,
+            &endpoints,
+            &platform::windows::control::command_line_for,
+        );
+
+        let count = |r: crate::models::Relevance| {
+            snapshot
+                .services
+                .iter()
+                .filter(|x| x.relevance == r)
+                .count()
+        };
+        println!(
+            "\n{} services from {} processes and {} sockets \
+             (registry v{}): {} developer, {} system, {} unclassified",
+            snapshot.services.len(),
+            raw.len(),
+            endpoints.len(),
+            snapshot.registry_version,
+            count(crate::models::Relevance::Developer),
+            count(crate::models::Relevance::System),
+            count(crate::models::Relevance::Unknown),
+        );
+        for service in &snapshot.services {
+            println!(
+                "  {:<9} {:<28} {}",
+                format!("{:?}", service.relevance).to_lowercase(),
+                service.label,
+                service.relevance_reason
+            );
+        }
+
+        // 1. Every service is classified and every verdict is explained.
+        for service in &snapshot.services {
+            assert!(
+                !service.relevance_reason.is_empty(),
+                "{} was not classified",
+                service.label
+            );
+            assert!(
+                service.relevance_reason.ends_with('.'),
+                "{}: reason is not a sentence: {}",
+                service.label,
+                service.relevance_reason
+            );
+        }
+
+        // 2. Nothing in the exclusion table was promoted, whatever it listens
+        //    on. This is the property the correction was about.
+        for service in &snapshot.services {
+            let stem = service
+                .process_name
+                .trim_end_matches(".exe")
+                .trim_end_matches(".EXE")
+                .to_ascii_lowercase();
+            if crate::logic::registry::excluded(&stem).is_some() {
+                assert_eq!(
+                    service.relevance,
+                    crate::models::Relevance::System,
+                    "{} is excluded but was classified {:?}",
+                    service.label,
+                    service.relevance
+                );
+            }
+        }
+
+        // 3. Developer mode is a narrowing. If it ever equals the full list on
+        //    a machine running a browser, it has stopped meaning anything.
+        let developer = count(crate::models::Relevance::Developer);
+        assert!(
+            developer <= snapshot.services.len(),
+            "more developer services than services"
+        );
+
+        // 4. The subgraph the frontend builds is closed: every developer
+        //    service has its process row, and every port that rides along has a
+        //    service.
+        let developer_ids: std::collections::HashSet<_> = snapshot
+            .services
+            .iter()
+            .filter(|x| x.relevance == crate::models::Relevance::Developer)
+            .map(|x| x.id.clone())
+            .collect();
+        for id in &developer_ids {
+            assert!(
+                snapshot.processes.iter().any(|p| &p.id == id),
+                "a developer service has no process row"
+            );
+        }
+
+        // 5. The command-line cache stayed bounded by what is running, and by
+        //    the services that could actually need one.
+        assert!(
+            s.command_lines.len() <= snapshot.services.len(),
+            "the command-line cache exceeded the service count"
+        );
+    }
 
     /// Telemetry has to survive a second tick to produce anything at all.
     #[test]
@@ -466,13 +681,20 @@ mod tests {
             snapshot: empty_snapshot(),
             cpu: CpuTracker::new(logical_cores()),
             system_cpu: SystemCpuTracker::new(),
+            command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
             running: false,
         };
 
         // First tick: no previous sample, so CPU is honestly absent.
-        let first = advance(&mut s, time::now_unix_millis(), &raw, &[]);
+        let first = advance(
+            &mut s,
+            time::now_unix_millis(),
+            &raw,
+            &[],
+            &no_command_lines,
+        );
         assert!(
             first.system.cpu_percent.is_none(),
             "the first tick cannot measure a rate"
@@ -484,7 +706,13 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(120));
 
-        let second = advance(&mut s, time::now_unix_millis(), &raw, &[]);
+        let second = advance(
+            &mut s,
+            time::now_unix_millis(),
+            &raw,
+            &[],
+            &no_command_lines,
+        );
         let cpu = second
             .system
             .cpu_percent
@@ -556,7 +784,7 @@ mod tests {
         let scan = vec![raw(1, T0 - 1000)];
 
         let sequences: Vec<u64> = (0..5)
-            .map(|i| advance(&mut s, T0 + i * 1000, &scan, &[]).sequence)
+            .map(|i| advance(&mut s, T0 + i * 1000, &scan, &[], &no_command_lines).sequence)
             .collect();
 
         assert_eq!(sequences, vec![1, 2, 3, 4, 5]);
@@ -567,9 +795,9 @@ mod tests {
         let mut s = state();
         let scan = vec![raw(1, T0 - 1000)];
 
-        let a = advance(&mut s, T0, &scan, &[]);
-        let b = advance(&mut s, T0 + 1000, &scan, &[]);
-        let c = advance(&mut s, T0 + 2000, &scan, &[]);
+        let a = advance(&mut s, T0, &scan, &[], &no_command_lines);
+        let b = advance(&mut s, T0 + 1000, &scan, &[], &no_command_lines);
+        let c = advance(&mut s, T0 + 2000, &scan, &[], &no_command_lines);
 
         assert!(a.captured_at < b.captured_at);
         assert!(b.captured_at < c.captured_at);
@@ -583,7 +811,13 @@ mod tests {
         assert_eq!(s.snapshot.sequence, 0);
         assert!(s.snapshot.processes.is_empty());
 
-        advance(&mut s, T0, &[raw(1, T0 - 1000), raw(2, T0 - 2000)], &[]);
+        advance(
+            &mut s,
+            T0,
+            &[raw(1, T0 - 1000), raw(2, T0 - 2000)],
+            &[],
+            &no_command_lines,
+        );
 
         assert_eq!(s.snapshot.sequence, 1);
         assert_eq!(s.snapshot.processes.len(), 2);
@@ -593,7 +827,7 @@ mod tests {
     fn a_snapshot_never_contains_two_rows_with_the_same_identity() {
         let mut s = state();
         let scan: Vec<_> = (1..60u32).map(|pid| raw(pid, T0 - (pid as i64))).collect();
-        let snapshot = advance(&mut s, T0, &scan, &[]);
+        let snapshot = advance(&mut s, T0, &scan, &[], &no_command_lines);
 
         assert_eq!(snapshot.processes.len(), 59);
         assert!(has_unique_identities(&snapshot));
@@ -605,7 +839,13 @@ mod tests {
         // same moment: the service, the process it was built from, and the
         // port row pointing back at it.
         let mut s = state();
-        let snapshot = advance(&mut s, T0, &[raw(1, T0 - 1000)], &[socket(5173, 1)]);
+        let snapshot = advance(
+            &mut s,
+            T0,
+            &[raw(1, T0 - 1000)],
+            &[socket(5173, 1)],
+            &no_command_lines,
+        );
 
         assert_eq!(snapshot.processes.len(), 1);
         assert_eq!(snapshot.ports.len(), 1);
@@ -634,6 +874,7 @@ mod tests {
             T0,
             &[raw(1, T0 - 1000), raw(2, T0 - 1000)],
             &[socket(5173, 1)],
+            &no_command_lines,
         );
 
         let marked: Vec<_> = snapshot
@@ -656,6 +897,7 @@ mod tests {
             T0,
             &[raw(1, T0 - 1000), raw(2, T0 - 2000)],
             &[socket(5173, 1), socket(8000, 2), socket(9999, 4242)],
+            &no_command_lines,
         );
 
         let by_port = |port: u16| {
@@ -684,14 +926,26 @@ mod tests {
         let mut s = state();
         let scan = [raw(1, T0 - 1000)];
 
-        let first = advance(&mut s, T0, &scan, &[socket(5173, 1), socket(8000, 1)]);
+        let first = advance(
+            &mut s,
+            T0,
+            &scan,
+            &[socket(5173, 1), socket(8000, 1)],
+            &no_command_lines,
+        );
         assert_eq!(first.ports.len(), 2);
 
-        let second = advance(&mut s, T0 + 1000, &scan, &[socket(5173, 1)]);
+        let second = advance(
+            &mut s,
+            T0 + 1000,
+            &scan,
+            &[socket(5173, 1)],
+            &no_command_lines,
+        );
         assert_eq!(second.ports.len(), 1, "a closed socket must not linger");
         assert_eq!(second.ports[0].port, 5173);
 
-        let third = advance(&mut s, T0 + 2000, &scan, &[]);
+        let third = advance(&mut s, T0 + 2000, &scan, &[], &no_command_lines);
         assert!(third.ports.is_empty());
     }
 
@@ -702,10 +956,22 @@ mod tests {
         let mut s = state();
         assert_eq!(s.cpu.tracked(), 0);
 
-        advance(&mut s, T0, &[raw(1, T0 - 1000), raw(2, T0 - 1000)], &[]);
+        advance(
+            &mut s,
+            T0,
+            &[raw(1, T0 - 1000), raw(2, T0 - 1000)],
+            &[],
+            &no_command_lines,
+        );
         assert_eq!(s.cpu.tracked(), 2);
 
-        advance(&mut s, T0 + 1000, &[raw(1, T0 - 1000)], &[]);
+        advance(
+            &mut s,
+            T0 + 1000,
+            &[raw(1, T0 - 1000)],
+            &[],
+            &no_command_lines,
+        );
         assert_eq!(s.cpu.tracked(), 1, "an exited process must be retired");
     }
 

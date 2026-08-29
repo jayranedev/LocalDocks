@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 
 use crate::logic::ports::format_address;
-use crate::models::{Endpoint, ProcessId, ProcessRow, Protocol, Service, ServiceStatus};
+use crate::models::{Endpoint, ProcessId, ProcessRow, Protocol, Relevance, Service, ServiceStatus};
 use crate::platform::windows::ports::RawEndpoint;
 
 /// The first port outside the IANA system range.
@@ -117,6 +117,13 @@ pub fn join_services(rows: &[ProcessRow], endpoints: &[RawEndpoint]) -> ServiceJ
             // unreachable until something can actually observe it — the same
             // reasoning as `ProcessStatus::Sleeping`.
             status: ServiceStatus::Running,
+            // The join observes; it does not judge. Relevance is decided by
+            // `logic::classify` in a second pass, because it needs the command
+            // line, which needs a syscall this pure module must not make.
+            // `Unknown` with no reason is the un-classified state, and the
+            // sampler asserts it never survives to a snapshot.
+            relevance: Relevance::Unknown,
+            relevance_reason: String::new(),
         });
     }
 
@@ -436,7 +443,10 @@ mod tests {
     #[test]
     fn service_identity_is_the_process_identity_and_nothing_new() {
         let r = row(8420, "node.exe");
-        let j = join_services(&[r.clone()], &[tcp4([127, 0, 0, 1], 5173, 8420)]);
+        let j = join_services(
+            std::slice::from_ref(&r),
+            &[tcp4([127, 0, 0, 1], 5173, 8420)],
+        );
         let s = &j.services[0];
 
         assert_eq!(s.id, r.id);
@@ -463,7 +473,10 @@ mod tests {
     #[test]
     fn process_facts_are_carried_onto_the_service_unchanged() {
         let r = row(8420, "node.exe");
-        let j = join_services(&[r.clone()], &[tcp4([127, 0, 0, 1], 5173, 8420)]);
+        let j = join_services(
+            std::slice::from_ref(&r),
+            &[tcp4([127, 0, 0, 1], 5173, 8420)],
+        );
         let s = &j.services[0];
 
         assert_eq!(s.process_name, r.name);

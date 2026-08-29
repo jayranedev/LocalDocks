@@ -1,4 +1,4 @@
-import type { Endpoint, ProcessId, Snapshot } from '../types';
+import type { Endpoint, ProcessId, Relevance, Snapshot } from '../types';
 
 /**
  * Everything the shared detail panel needs, assembled from a snapshot.
@@ -26,6 +26,14 @@ export interface DetailTarget {
   uptimeSeconds: number;
   threadCount: number;
   isService: boolean;
+  /**
+   * How the Developer Registry classified this service, and why.
+   *
+   * `null` when the process is not a service — there is nothing to classify,
+   * and inventing an "unknown" would imply the registry had been consulted and
+   * had no answer, which is a different claim.
+   */
+  classification: { relevance: Relevance; reason: string } | null;
   /** The socket the user clicked, when they arrived from the Ports screen. */
   highlight: { port: number; address: string } | null;
 }
@@ -63,6 +71,9 @@ export function buildDetailTarget(
     uptimeSeconds: process.uptimeSeconds,
     threadCount: process.threadCount,
     isService: process.isService,
+    classification: service
+      ? { relevance: service.relevance, reason: service.relevanceReason }
+      : null,
     highlight,
   };
 }
