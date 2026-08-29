@@ -65,6 +65,7 @@ pub fn map_ports(
     endpoints: &[RawEndpoint],
     processes: &[RawProcess],
     rows: &[ProcessRow],
+    service_labels: &HashMap<ProcessId, String>,
 ) -> Vec<PortRow> {
     let names: HashMap<u32, &str> = processes.iter().map(|p| (p.pid, p.name.as_str())).collect();
     let identities: HashMap<u32, &ProcessId> = rows.iter().map(|r| (r.pid, &r.id)).collect();
@@ -95,13 +96,17 @@ pub fn map_ports(
             protocol: e.protocol,
             address: format_address(e.address, e.scope_id),
             pid: e.pid,
+            // The label comes from the service model, keyed on identity. A
+            // socket with no attributable process has no identity and so gets
+            // no label — the two nulls travel together, which is what keeps an
+            // informational row informational.
+            service_label: owner
+                .id
+                .as_ref()
+                .and_then(|id| service_labels.get(id))
+                .cloned(),
             process_id: owner.id,
             process_name: owner.name,
-            // Service joining is the next milestone (docs/ROADMAP.md § 2.2).
-            // `None` renders as "—", which is what "not grouped yet" looks
-            // like; inventing a label from the process name would be a claim
-            // the backend cannot support.
-            service_label: None,
             // Truthful by construction: the TCP table is queried with
             // TCP_TABLE_OWNER_PID_LISTENER, so every TCP row is a listener,
             // and a bound UDP socket is receiving. UDP has no connection state
@@ -224,6 +229,19 @@ mod tests {
 
     const T: &str = "2026-08-28T09:00:00.000Z";
 
+    /// No service model in play — the default for every test that is not about
+    /// labelling.
+    fn no_labels() -> HashMap<ProcessId, String> {
+        HashMap::new()
+    }
+
+    fn labels(pairs: &[(&str, &str)]) -> HashMap<ProcessId, String> {
+        pairs
+            .iter()
+            .map(|(id, label)| ((*id).to_string(), (*label).to_string()))
+            .collect()
+    }
+
     // ------------------------------------------------------------ formatting
 
     #[test]
@@ -305,7 +323,12 @@ mod tests {
             v4([0, 0, 0, 0], 5173, 8420),
             v6("::", 5173, 8420),
         ];
-        let ports = map_ports(&endpoints, &[raw_process(8420, "node.exe")], &[]);
+        let ports = map_ports(
+            &endpoints,
+            &[raw_process(8420, "node.exe")],
+            &[],
+            &no_labels(),
+        );
 
         assert_eq!(ports.len(), 4);
         let addresses: Vec<_> = ports.iter().map(|p| p.address.as_str()).collect();
@@ -322,7 +345,12 @@ mod tests {
             v4([127, 0, 0, 1], 8000, 1),
             endpoint(Protocol::Udp, IpAddr::V4(Ipv4Addr::LOCALHOST), 8000, 1),
         ];
-        let ports = map_ports(&endpoints, &[raw_process(1, "python.exe")], &[]);
+        let ports = map_ports(
+            &endpoints,
+            &[raw_process(1, "python.exe")],
+            &[],
+            &no_labels(),
+        );
 
         assert_eq!(ports.len(), 2);
         assert_eq!(ports[0].protocol, Protocol::Tcp, "TCP sorts first");
@@ -338,7 +366,12 @@ mod tests {
             v4([127, 0, 0, 1], 5174, 8420),
             endpoint(Protocol::Udp, IpAddr::V4(Ipv4Addr::LOCALHOST), 5173, 8420),
         ];
-        let ports = map_ports(&endpoints, &[raw_process(8420, "node.exe")], &[]);
+        let ports = map_ports(
+            &endpoints,
+            &[raw_process(8420, "node.exe")],
+            &[],
+            &no_labels(),
+        );
 
         let mut keys = HashSet::new();
         for p in &ports {
@@ -355,7 +388,12 @@ mod tests {
         // reports both with every field identical. The dropped row carries
         // nothing the kept one lacks.
         let e = endpoint(Protocol::Udp, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 3702, 6872);
-        let ports = map_ports(&[e.clone(), e], &[raw_process(6872, "svchost.exe")], &[]);
+        let ports = map_ports(
+            &[e.clone(), e],
+            &[raw_process(6872, "svchost.exe")],
+            &[],
+            &no_labels(),
+        );
 
         assert_eq!(ports.len(), 1);
         assert_eq!(ports[0].port, 3702);
@@ -375,6 +413,7 @@ mod tests {
                 raw_process(200, "mdns-b.exe"),
             ],
             &[],
+            &no_labels(),
         );
 
         assert_eq!(ports.len(), 2);
@@ -389,7 +428,7 @@ mod tests {
         let mut b = v6("fe80::1", 5173, 8420);
         b.scope_id = 17;
 
-        let ports = map_ports(&[a, b], &[raw_process(8420, "node.exe")], &[]);
+        let ports = map_ports(&[a, b], &[raw_process(8420, "node.exe")], &[], &no_labels());
         assert_eq!(ports.len(), 2);
         assert_ne!(ports[0].address, ports[1].address);
     }
@@ -402,7 +441,7 @@ mod tests {
             v4([127, 0, 0, 1], 8000, 1),
             v6("::1", 5173, 1),
         ];
-        let ports = map_ports(&endpoints, &[raw_process(1, "node.exe")], &[]);
+        let ports = map_ports(&endpoints, &[raw_process(1, "node.exe")], &[], &no_labels());
         let order: Vec<_> = ports.iter().map(|p| (p.port, p.address.as_str())).collect();
 
         // By port, then IPv4 before IPv6 — the order the Ports screen also
@@ -426,6 +465,7 @@ mod tests {
             &[v4([127, 0, 0, 1], 5173, 8420)],
             &[raw_process(8420, "node.exe")],
             &[row(8420, "node.exe", T)],
+            &no_labels(),
         );
 
         assert_eq!(ports[0].pid, 8420);
@@ -445,6 +485,7 @@ mod tests {
             &[v4([0, 0, 0, 0], 135, 1160)],
             &[raw_process(1160, "svchost.exe")],
             &[], // not in rows: its creation time was unreadable
+            &no_labels(),
         );
 
         assert_eq!(ports[0].process_name, "svchost.exe");
@@ -459,7 +500,7 @@ mod tests {
     fn a_socket_whose_process_vanished_is_kept_as_informational() {
         // The scan is not atomic. The socket was really bound; the process is
         // really gone. Dropping the row would hide a real socket.
-        let ports = map_ports(&[v4([127, 0, 0, 1], 5173, 9999)], &[], &[]);
+        let ports = map_ports(&[v4([127, 0, 0, 1], 5173, 9999)], &[], &[], &no_labels());
 
         assert_eq!(ports.len(), 1);
         assert_eq!(ports[0].pid, 9999);
@@ -475,6 +516,7 @@ mod tests {
             &[v4([127, 0, 0, 1], 5173, 8420)],
             &[raw_process(8420, "node.exe")],
             &[],
+            &no_labels(),
         );
         assert!(ports[0].process_id.is_none());
     }
@@ -488,6 +530,7 @@ mod tests {
             &[v4([127, 0, 0, 1], 5173, 8420)],
             &[raw_process(8420, "python.exe")],
             &[row(8420, "python.exe", "2026-08-28T10:00:00.000Z")],
+            &no_labels(),
         );
         assert_eq!(
             ports[0].process_id.as_deref(),
@@ -506,6 +549,7 @@ mod tests {
             ],
             &[raw_process(8420, "node.exe")],
             &[row(8420, "node.exe", T)],
+            &no_labels(),
         );
 
         let ids: HashSet<_> = ports.iter().map(|p| p.process_id.clone()).collect();
@@ -523,6 +567,7 @@ mod tests {
             ],
             &[raw_process(1, "x.exe")],
             &[],
+            &no_labels(),
         );
         assert_eq!(ports[0].protocol, Protocol::Tcp);
         assert_eq!(ports[1].protocol, Protocol::Udp);
@@ -534,22 +579,83 @@ mod tests {
             &[v4([127, 0, 0, 1], 5173, 1)],
             &[raw_process(1, "node.exe")],
             &[],
+            &no_labels(),
         );
         assert_eq!(ports[0].state, PortState::Listening);
     }
 
     #[test]
-    fn no_row_claims_a_service_label_while_the_service_model_is_unimplemented() {
+    fn a_row_carries_the_label_of_the_service_its_process_became() {
+        let id = crate::models::make_process_id(8420, T);
+        let ports = map_ports(
+            &[v4([127, 0, 0, 1], 5173, 8420), v6("::1", 5173, 8420)],
+            &[raw_process(8420, "node.exe")],
+            &[row(8420, "node.exe", T)],
+            &labels(&[(&id, "node:5173")]),
+        );
+
+        assert_eq!(ports.len(), 2);
+        for p in &ports {
+            assert_eq!(p.service_label.as_deref(), Some("node:5173"));
+        }
+    }
+
+    #[test]
+    fn a_row_whose_process_is_not_a_service_carries_no_label() {
+        let ports = map_ports(
+            &[v4([127, 0, 0, 1], 5173, 8420)],
+            &[raw_process(8420, "node.exe")],
+            &[row(8420, "node.exe", T)],
+            &no_labels(),
+        );
+        assert!(ports[0].service_label.is_none());
+    }
+
+    #[test]
+    fn an_unattributable_socket_gets_neither_an_identity_nor_a_label() {
+        // The two nulls travel together: no identity means nothing to look a
+        // label up by, and inventing one is exactly what must not happen.
+        let id = crate::models::make_process_id(1160, T);
+        let ports = map_ports(
+            &[v4([0, 0, 0, 0], 5173, 1160)],
+            &[raw_process(1160, "svchost.exe")],
+            &[], // no row: creation time unreadable, so no identity
+            &labels(&[(&id, "svchost:5173")]),
+        );
+
+        assert_eq!(ports[0].process_name, "svchost.exe");
+        assert_eq!(ports[0].process_id, None);
+        assert_eq!(
+            ports[0].service_label, None,
+            "a label must not be attached to a row with no identity"
+        );
+    }
+
+    #[test]
+    fn a_label_for_a_different_process_never_leaks_onto_a_row() {
+        let other = crate::models::make_process_id(999, T);
+        let ports = map_ports(
+            &[v4([127, 0, 0, 1], 5173, 8420)],
+            &[raw_process(8420, "node.exe")],
+            &[row(8420, "node.exe", T)],
+            &labels(&[(&other, "somethingelse:1234")]),
+        );
+        assert!(ports[0].service_label.is_none());
+    }
+
+    #[test]
+    fn no_row_claims_a_service_label_when_no_service_model_ran() {
         let ports = map_ports(
             &[v4([127, 0, 0, 1], 5173, 1)],
             &[raw_process(1, "node.exe")],
             &[row(1, "node.exe", T)],
+            &no_labels(),
         );
         assert!(ports[0].service_label.is_none());
     }
 
     #[test]
     fn an_empty_scan_maps_to_no_rows() {
-        assert!(map_ports(&[], &[], &[]).is_empty());
+        assert!(map_ports(&[], &[], &[], &no_labels()).is_empty());
     }
 }
