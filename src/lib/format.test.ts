@@ -9,6 +9,7 @@ import {
   isFieldOk,
   localUrl,
   primaryPort,
+  formatRate,
   secondsSince,
 } from './format';
 import type { Endpoint } from '../types';
@@ -132,5 +133,37 @@ describe('fieldText / isFieldOk', () => {
 
   it('never returns an empty string for any variant', () => {
     expect(fieldText({ kind: 'unavailable' })).not.toBe('');
+  });
+});
+
+describe('formatRate', () => {
+  it('never rounds a measured rate away to zero', () => {
+    // The defect this function exists for: 200 KB/s through the memory
+    // formatter renders as "0 MB", which a reader cannot tell from an idle
+    // link.
+    expect(formatRate(200_000)).not.toMatch(/^0 /);
+    expect(formatRate(1)).not.toMatch(/^0 /);
+    expect(formatRate(0.4)).not.toMatch(/^0 /);
+    expect(formatRate(1023)).not.toMatch(/^0 /);
+  });
+
+  it('only prints zero for a genuine zero', () => {
+    expect(formatRate(0)).toBe('0 B/s');
+    expect(formatRate(-5)).toBe('0 B/s');
+  });
+
+  it('steps down to the unit that keeps the number readable', () => {
+    expect(formatRate(512)).toBe('512 B/s');
+    expect(formatRate(2048)).toBe('2.0 KB/s');
+    expect(formatRate(200_000)).toBe('195 KB/s');
+    expect(formatRate(5 * 1024 * 1024)).toBe('5.0 MB/s');
+    expect(formatRate(120 * 1024 * 1024)).toBe('120 MB/s');
+    expect(formatRate(3 * 1024 ** 3)).toBe('3.0 GB/s');
+  });
+
+  it('always carries a unit', () => {
+    for (const value of [0, 1, 999, 1024, 1e6, 1e9, 1e12]) {
+      expect(formatRate(value)).toMatch(/(B|KB|MB|GB)\/s$/);
+    }
   });
 });

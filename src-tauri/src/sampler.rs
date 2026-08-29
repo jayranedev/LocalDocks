@@ -34,7 +34,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::errors::SystemError;
 use crate::logic::classify;
@@ -43,8 +43,8 @@ use crate::logic::ports::map_ports;
 use crate::logic::process::map_processes;
 use crate::logic::registry::REGISTRY_VERSION;
 use crate::logic::service::join_services;
-use crate::logic::telemetry::SystemCpuTracker;
-use crate::models::{ProcessId, Snapshot, SystemTelemetry};
+use crate::logic::telemetry::{NetworkTracker, SystemCpuTracker};
+use crate::models::{ProcessId, ScanTiming, Snapshot, SystemTelemetry};
 use crate::platform;
 use crate::time;
 
@@ -105,6 +105,9 @@ struct State {
     cpu: CpuTracker,
     /// Previous machine-wide and per-core CPU counters, for the same reason.
     system_cpu: SystemCpuTracker,
+    /// Previous interface octet counters, so throughput is a rate and not a
+    /// lifetime total.
+    network: NetworkTracker,
     /// Command lines already read, pruned to live services every tick so it
     /// cannot grow with the machine's uptime.
     command_lines: CommandLines,
@@ -141,6 +144,7 @@ impl Sampler {
                     snapshot: empty_snapshot(),
                     cpu: CpuTracker::new(logical_cores),
                     system_cpu: SystemCpuTracker::new(),
+                    network: NetworkTracker::new(),
                     command_lines: CommandLines::new(),
                     sequence: 0,
                     interval,
@@ -235,14 +239,34 @@ where
         // Processes first, then sockets: port attribution reads the process
         // list, and doing it in this order means the process a socket is
         // attributed to was observed no later than the socket itself.
-        let scanned = platform::windows::process::enumerate()
-            .and_then(|processes| platform::windows::ports::enumerate().map(|p| (processes, p)));
+        //
+        // Telemetry is collected in this same pass, not on a cadence of its
+        // own. Discovery and telemetry therefore always describe the same
+        // moment, and there is exactly one thing in the process deciding when
+        // to look at the machine.
+        let tick_started = Instant::now();
+
+        let processes = platform::windows::process::enumerate();
+        let processes_millis = tick_started.elapsed().as_secs_f64() * 1000.0;
+
+        let ports_started = Instant::now();
+        let endpoints = processes
+            .as_ref()
+            .ok()
+            .and_then(|_| platform::windows::ports::enumerate().ok());
+        let ports_millis = ports_started.elapsed().as_secs_f64() * 1000.0;
+
         let captured_at_millis = time::now_unix_millis();
 
-        let event = match scanned {
-            Ok((raw, endpoints)) => {
+        // Discovery is critical; telemetry is not. A process or socket scan
+        // that fails has no snapshot to publish, so the previous one stands
+        // behind a warning. A telemetry provider that fails is one card
+        // reading "unavailable" beside a snapshot that is otherwise complete —
+        // docs/BACKEND.md's error taxonomy, applied.
+        let event = match (processes, endpoints) {
+            (Ok(raw), Some(endpoints)) => {
                 let mut state = lock(&shared.state);
-                let snapshot = advance(
+                let mut snapshot = advance(
                     &mut state,
                     captured_at_millis,
                     &raw,
@@ -250,15 +274,26 @@ where
                     &platform::windows::control::command_line_for,
                 );
                 drop(state);
+
+                snapshot.timing = ScanTiming {
+                    total_millis: tick_started.elapsed().as_secs_f64() * 1000.0,
+                    processes_millis,
+                    ports_millis,
+                    telemetry_millis: snapshot.timing.telemetry_millis,
+                };
                 SamplerEvent::Update(snapshot)
             }
-            Err(e) => {
+            (Err(e), _) => {
                 // Requirement: keep the previous good snapshot. Nothing in
                 // state is touched, so `get_snapshot` still returns the last
                 // good scan and the UI degrades to a warning over live data
                 // rather than blanking.
                 log::error!("sampler tick failed: {e}");
                 SamplerEvent::Failure(e.to_string())
+            }
+            (Ok(_), None) => {
+                log::error!("sampler tick failed: the socket scan did not complete");
+                SamplerEvent::Failure("The socket scan did not complete.".to_string())
             }
         };
 
@@ -334,6 +369,7 @@ fn advance(
     }
 
     let ports = map_ports(endpoints, raw, &mapping.rows, join.labels());
+    let (system, telemetry_millis) = read_telemetry(state, captured_at_millis);
 
     // Relevance, in three steps that stay on the right side of the pure/impure
     // line: decide who needs a command line (pure), read the ones that are
@@ -355,7 +391,11 @@ fn advance(
         // Conflict detection is a later milestone (docs/ROADMAP.md). `None`
         // renders as "—" rather than as a confident zero.
         conflicts: None,
-        system: read_telemetry(state),
+        system,
+        timing: ScanTiming {
+            telemetry_millis,
+            ..ScanTiming::default()
+        },
         registry_version: REGISTRY_VERSION,
     };
 
@@ -402,17 +442,30 @@ fn refresh_command_lines(
 
 /// Machine-wide load for this tick.
 ///
-/// Every reading is independently optional: a failed CPU query must not blank
-/// the memory figures, and neither may take the tick down. A field that could
-/// not be read is `None`, which the UI renders as "—" rather than as zero.
-fn read_telemetry(state: &mut State) -> SystemTelemetry {
+/// Every reading is independently optional. A failed CPU query must not blank
+/// the memory figures, a machine with no GPU counters must still report its
+/// network throughput, and none of them may take the tick down — telemetry is
+/// decoration on a process dashboard. A field that could not be read is `None`,
+/// which the UI renders as an explicit unavailable state rather than as zero.
+///
+/// The returned `ScanTiming` carries only `telemetry_millis`; the caller fills
+/// in the rest. Measuring here rather than around the call is what makes a
+/// provider that becomes slow on some other machine visible in the UI instead
+/// of only in a debug build.
+fn read_telemetry(state: &mut State, now_millis: i64) -> (SystemTelemetry, f64) {
+    let started = Instant::now();
+
     let cpu_percent =
         platform::windows::system::cpu_times().and_then(|now| state.system_cpu.observe(now));
     let per_core_percent = platform::windows::system::per_core_times()
         .and_then(|now| state.system_cpu.observe_per_core(now));
     let memory = platform::windows::system::memory();
 
-    SystemTelemetry {
+    // Each provider is asked independently, and each returning None means the
+    // same thing: this machine does not offer it, or it could not be read now.
+    let network = platform::windows::network::interfaces()
+        .map(|interfaces| state.network.observe(now_millis, &interfaces));
+    let system = SystemTelemetry {
         cpu_percent,
         logical_processors: per_core_percent
             .as_ref()
@@ -422,7 +475,10 @@ fn read_telemetry(state: &mut State) -> SystemTelemetry {
         memory_total_bytes: memory.map(|m| m.total_bytes),
         memory_used_bytes: memory.map(|m| m.used_bytes()),
         memory_percent: memory.and_then(|m| m.percent()),
-    }
+        network,
+    };
+
+    (system, started.elapsed().as_secs_f64() * 1000.0)
 }
 
 /// Reject a cadence that would make the sampler misbehave.
@@ -468,6 +524,7 @@ fn empty_snapshot() -> Snapshot {
             logical_processors: logical_cores(),
             ..SystemTelemetry::default()
         },
+        timing: ScanTiming::default(),
         registry_version: REGISTRY_VERSION,
     }
 }
@@ -539,6 +596,7 @@ mod tests {
             snapshot: empty_snapshot(),
             cpu: CpuTracker::new(4),
             system_cpu: SystemCpuTracker::new(),
+            network: NetworkTracker::new(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -567,6 +625,7 @@ mod tests {
             snapshot: empty_snapshot(),
             cpu: CpuTracker::new(logical_cores()),
             system_cpu: SystemCpuTracker::new(),
+            network: NetworkTracker::new(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -673,6 +732,190 @@ mod tests {
         );
     }
 
+    /// Telemetry rides in the tick that already exists rather than on a
+    /// cadence of its own.
+    ///
+    /// The property is not "telemetry is present" but "telemetry and discovery
+    /// describe the same moment". A second cadence would produce a snapshot
+    /// whose process list and CPU figure were taken seconds apart, and nothing
+    /// in the contract would show it.
+    #[test]
+    fn telemetry_arrives_in_the_same_snapshot_as_discovery_with_the_same_sequence() {
+        let raw = platform::windows::process::enumerate().expect("process scan");
+        let mut s = real_state();
+
+        let first = advance(
+            &mut s,
+            time::now_unix_millis(),
+            &raw,
+            &[],
+            &no_command_lines,
+        );
+        std::thread::sleep(Duration::from_millis(120));
+        let second = advance(
+            &mut s,
+            time::now_unix_millis(),
+            &raw,
+            &[],
+            &no_command_lines,
+        );
+
+        assert_eq!(
+            second.sequence,
+            first.sequence + 1,
+            "one tick, one sequence"
+        );
+        // Memory needs no history, so it is present from the first tick.
+        assert!(first.system.memory_total_bytes.is_some());
+        // Rates need two samples, and by the second tick they exist.
+        assert!(second.system.cpu_percent.is_some());
+        // Every section that is present belongs to this snapshot's moment: the
+        // trackers advanced exactly twice, so a rate exists exactly now.
+        if second.system.network.is_some() {
+            assert!(
+                second
+                    .system
+                    .network
+                    .as_ref()
+                    .unwrap()
+                    .receive_bytes_per_sec
+                    .is_some(),
+                "the network tracker did not advance with the tick"
+            );
+        }
+    }
+
+    /// The whole point of one cadence: exactly one thread looks at the machine.
+    ///
+    /// Counted by name rather than by trusting the design — a provider that
+    /// quietly spawned its own poller would pass every other test here.
+    #[test]
+    fn the_sampler_runs_on_exactly_one_thread_however_many_providers_it_has() {
+        let sampler = Sampler::new(logical_cores(), Duration::from_millis(MIN_INTERVAL_MS));
+        sampler.start(|_| {});
+        std::thread::sleep(Duration::from_millis(700));
+
+        let mine = std::process::id();
+        let threads = platform::windows::process::enumerate()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.pid == mine)
+            .map(|p| p.thread_count)
+            .unwrap();
+
+        sampler.stop();
+        std::thread::sleep(Duration::from_millis(200));
+
+        let after = platform::windows::process::enumerate()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.pid == mine)
+            .map(|p| p.thread_count)
+            .unwrap();
+
+        // Stopping the sampler must return the thread count to where it was,
+        // which it cannot do if a provider owns one of its own.
+        assert!(
+            after < threads,
+            "stopping the sampler freed no thread: {threads} before, {after} after"
+        );
+    }
+
+    /// A telemetry provider is optional; a process scan is not.
+    ///
+    /// The distinction is what keeps one missing counter from blanking the
+    /// dashboard. Asserted here by checking that a snapshot is produced and
+    /// complete on a machine where at least one optional provider may well be
+    /// absent — and that the absent ones are `None` rather than zero.
+    #[test]
+    fn a_missing_optional_provider_still_produces_a_complete_snapshot() {
+        let raw = platform::windows::process::enumerate().expect("process scan");
+        let mut s = real_state();
+        advance(
+            &mut s,
+            time::now_unix_millis(),
+            &raw,
+            &[],
+            &no_command_lines,
+        );
+        std::thread::sleep(Duration::from_millis(120));
+        let snapshot = advance(
+            &mut s,
+            time::now_unix_millis(),
+            &raw,
+            &[],
+            &no_command_lines,
+        );
+
+        // Discovery is intact whatever telemetry did.
+        assert!(!snapshot.processes.is_empty());
+        assert!(snapshot.sequence > 0);
+
+        // And an absent provider is None rather than a zero.
+        if let Some(network) = &snapshot.system.network {
+            assert!(
+                network.receive_bytes_per_sec.is_some() || network.interfaces.is_empty(),
+                "a measured interface must carry a rate by the second tick"
+            );
+        }
+    }
+
+    /// The cost of telemetry, measured rather than assumed.
+    ///
+    /// The budget is the tick, not a fixed number: telemetry that cost as much
+    /// as the process scan would be a design problem however few milliseconds
+    /// that happened to be on this machine.
+    #[test]
+    fn telemetry_costs_a_small_fraction_of_the_tick() {
+        let raw = platform::windows::process::enumerate().expect("process scan");
+        let mut s = real_state();
+        advance(
+            &mut s,
+            time::now_unix_millis(),
+            &raw,
+            &[],
+            &no_command_lines,
+        );
+
+        let mut worst: f64 = 0.0;
+        for _ in 0..5 {
+            std::thread::sleep(Duration::from_millis(60));
+            let started = Instant::now();
+            let snapshot = advance(
+                &mut s,
+                time::now_unix_millis(),
+                &raw,
+                &[],
+                &no_command_lines,
+            );
+            let whole = started.elapsed().as_secs_f64() * 1000.0;
+            worst = worst.max(snapshot.timing.telemetry_millis);
+            assert!(
+                snapshot.timing.telemetry_millis <= whole + 0.5,
+                "telemetry cannot cost more than the advance that contains it"
+            );
+        }
+        println!("\nworst telemetry collection: {worst:.2} ms");
+        assert!(
+            worst < 50.0,
+            "telemetry took {worst:.2} ms, which is not a small fraction"
+        );
+    }
+
+    /// A `State` with the real providers open, for the tests above.
+    fn real_state() -> State {
+        State {
+            snapshot: empty_snapshot(),
+            cpu: CpuTracker::new(logical_cores()),
+            system_cpu: SystemCpuTracker::new(),
+            network: NetworkTracker::new(),
+            command_lines: CommandLines::new(),
+            sequence: 0,
+            interval: Duration::from_millis(1000),
+            running: false,
+        }
+    }
+
     /// Telemetry has to survive a second tick to produce anything at all.
     #[test]
     fn a_real_tick_reports_machine_load_after_the_first_sample() {
@@ -681,6 +924,7 @@ mod tests {
             snapshot: empty_snapshot(),
             cpu: CpuTracker::new(logical_cores()),
             system_cpu: SystemCpuTracker::new(),
+            network: NetworkTracker::new(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),

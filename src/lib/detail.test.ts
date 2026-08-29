@@ -20,7 +20,9 @@ function snapshot(): Snapshot {
       memoryTotalBytes: null,
       memoryUsedBytes: null,
       memoryPercent: null,
+      network: null,
     },
+    timing: { totalMillis: 0, processesMillis: 0, portsMillis: 0, telemetryMillis: 0 },
     registryVersion: 1,
     services: [
       {

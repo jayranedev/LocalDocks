@@ -24,6 +24,14 @@ const NO_TELEMETRY: SystemTelemetry = {
   memoryTotalBytes: null,
   memoryUsedBytes: null,
   memoryPercent: null,
+  network: null,
+};
+
+const NO_TIMING = {
+  totalMillis: 0,
+  processesMillis: 0,
+  portsMillis: 0,
+  telemetryMillis: 0,
 };
 
 function process(pid: number, parentPid: number, name: string, isService = false): ProcessRow {
@@ -119,6 +127,7 @@ function snapshot(): Snapshot {
     ],
     conflicts: null,
     system: NO_TELEMETRY,
+    timing: NO_TIMING,
     registryVersion: 1,
   };
 }
@@ -314,6 +323,7 @@ describe('degenerate snapshots', () => {
       ports: [],
       conflicts: null,
       system: NO_TELEMETRY,
+      timing: NO_TIMING,
       registryVersion: 1,
     };
     const view = viewSnapshot(s, 'developer');
@@ -330,6 +340,7 @@ describe('bookkeeping', () => {
     expect(view.snapshot.capturedAt).toBe(s.capturedAt);
     expect(view.snapshot.conflicts).toBeNull();
     expect(view.snapshot.system).toBe(s.system);
+    expect(view.snapshot.timing).toBe(s.timing);
     expect(view.snapshot.registryVersion).toBe(s.registryVersion);
   });
 

@@ -19,6 +19,23 @@
 //!
 //! Memory needs no history — `GlobalMemoryStatusEx` reports a level, not a
 //! total — so it passes through untouched apart from the percentage.
+//!
+//! # Everything else
+//!
+//! Network and storage are the same shape as CPU: cumulative counters that
+//! only become a rate when differenced against a previous sample. GPU and
+//! thermal are levels and need no history, but they do need folding and
+//! filtering, which is judgement and therefore belongs here rather than beside
+//! the syscall.
+//!
+//! Nothing in this file calls Windows. Every function takes the numbers the
+//! platform layer already read, which is what lets the awkward cases —
+//! a counter that reset, an interface that appeared mid-session, a thermal zone
+//! reporting absolute zero — be tested rather than waited for.
+
+use std::collections::HashMap;
+
+use crate::models::{NetworkInterface, NetworkTelemetry};
 
 /// One reading of the idle/kernel/user counters, in 100 ns units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -124,6 +141,118 @@ impl MemoryStatus {
         let share = (self.used_bytes() as f64) / (self.total_bytes as f64) * 100.0;
         Some(share.clamp(0.0, 100.0) as f32)
     }
+}
+
+// ---------------------------------------------------------------- rate maths
+
+/// A cumulative counter turned into a per-second rate.
+///
+/// Every counter in this module is cumulative — bytes since the interface came
+/// up, bytes since the disk was enumerated — so the rate is always a difference
+/// over an elapsed time, never the counter itself. Reading a lifetime total as
+/// a throughput is the single most common way to make a network graph lie.
+///
+/// `None` rather than zero in three cases, all of which mean "no measurement",
+/// not "no activity":
+///
+/// * **No elapsed time.** Two samples inside the same millisecond divide by
+///   zero; a negative elapsed means the clock moved backwards.
+/// * **The counter went backwards.** A 64-bit octet counter does not wrap in
+///   any human timescale, but an adapter that is disabled and re-enabled, or a
+///   drive that is removed and reattached, restarts from zero. The interval
+///   spanning that reset has no meaningful rate, and reporting the raw
+///   difference would print a negative or an astronomical one.
+/// * **No previous sample**, handled by the callers below.
+pub fn per_second(previous: u64, now: u64, elapsed_millis: i64) -> Option<f64> {
+    if elapsed_millis <= 0 {
+        return None;
+    }
+    // Reset, not a wrap: see above.
+    let delta = now.checked_sub(previous)?;
+    Some((delta as f64) * 1000.0 / (elapsed_millis as f64))
+}
+
+// -------------------------------------------------------------------- network
+
+/// One interface as the platform layer read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawInterface {
+    /// `InterfaceLuid`, the stable identity. Deliberately not the interface
+    /// index, which Windows reassigns.
+    pub luid: u64,
+    pub name: String,
+    pub description: String,
+    pub in_octets: u64,
+    pub out_octets: u64,
+    pub link_speed_bits_per_sec: Option<u64>,
+}
+
+/// Previous octet counters, keyed by interface LUID.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkTracker {
+    previous: HashMap<u64, (u64, u64)>,
+    at_millis: Option<i64>,
+}
+
+impl NetworkTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Turn this tick's counters into rates.
+    ///
+    /// The map is replaced rather than merged, so an interface that
+    /// disappeared is forgotten and cannot be resurrected by a later
+    /// reappearance carrying a reset counter. That also bounds the map by what
+    /// exists now rather than by how long the app has been open.
+    pub fn observe(&mut self, now_millis: i64, interfaces: &[RawInterface]) -> NetworkTelemetry {
+        let elapsed = self.at_millis.map(|then| now_millis - then);
+        let mut current = HashMap::with_capacity(interfaces.len());
+        let mut rows = Vec::with_capacity(interfaces.len());
+
+        for i in interfaces {
+            let rate = |field: fn(&(u64, u64)) -> u64, now: u64| -> Option<f64> {
+                let previous = self.previous.get(&i.luid)?;
+                per_second(field(previous), now, elapsed?)
+            };
+
+            rows.push(NetworkInterface {
+                name: i.name.clone(),
+                description: i.description.clone(),
+                receive_bytes_per_sec: rate(|p| p.0, i.in_octets),
+                transmit_bytes_per_sec: rate(|p| p.1, i.out_octets),
+                link_speed_bits_per_sec: i.link_speed_bits_per_sec,
+            });
+            current.insert(i.luid, (i.in_octets, i.out_octets));
+        }
+
+        self.previous = current;
+        self.at_millis = Some(now_millis);
+
+        NetworkTelemetry {
+            receive_bytes_per_sec: sum_measured(rows.iter().map(|r| r.receive_bytes_per_sec)),
+            transmit_bytes_per_sec: sum_measured(rows.iter().map(|r| r.transmit_bytes_per_sec)),
+            interfaces: rows,
+        }
+    }
+}
+
+/// Sum the values that exist, or `None` if none did.
+///
+/// The machine total must not count an interface that has no rate yet. An
+/// interface appearing mid-session — a VPN connecting, a phone tethering —
+/// carries a lifetime octet count, and treating its first observation as a
+/// delta would print several gigabytes per second exactly once. Nor may the
+/// total be zero when nothing could be measured: that is the difference
+/// between an idle machine and an unmeasured one.
+fn sum_measured(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
+    let mut total = 0.0;
+    let mut any = false;
+    for v in values.flatten() {
+        total += v;
+        any = true;
+    }
+    any.then_some(total)
 }
 
 #[cfg(test)]
@@ -232,6 +361,203 @@ mod tests {
                 assert!((0.0..=100.0).contains(&p), "{p} out of range");
             }
         }
+    }
+
+    // ------------------------------------------------------------ rate maths
+
+    #[test]
+    fn a_rate_is_the_difference_over_the_elapsed_time() {
+        // 1000 bytes in 1000 ms is 1000 B/s.
+        assert_eq!(per_second(0, 1_000, 1_000), Some(1_000.0));
+        // The same difference in half the time is twice the rate.
+        assert_eq!(per_second(0, 1_000, 500), Some(2_000.0));
+        // A counter that did not move is a real zero, not an absence.
+        assert_eq!(per_second(5_000, 5_000, 1_000), Some(0.0));
+    }
+
+    #[test]
+    fn zero_or_negative_elapsed_time_reports_nothing_rather_than_dividing() {
+        assert_eq!(per_second(0, 1_000, 0), None);
+        assert_eq!(per_second(0, 1_000, -50), None);
+    }
+
+    #[test]
+    fn a_counter_that_went_backwards_reports_nothing_rather_than_a_wrong_rate() {
+        // An adapter disabled and re-enabled restarts from zero. The interval
+        // spanning that has no meaningful rate.
+        assert_eq!(per_second(1_000_000, 5, 1_000), None);
+    }
+
+    // --------------------------------------------------------------- network
+
+    fn iface(luid: u64, name: &str, r#in: u64, out: u64) -> RawInterface {
+        RawInterface {
+            luid,
+            name: name.into(),
+            description: format!("{name} adapter"),
+            in_octets: r#in,
+            out_octets: out,
+            link_speed_bits_per_sec: Some(1_000_000_000),
+        }
+    }
+
+    #[test]
+    fn the_first_network_sample_has_no_rate_and_does_not_report_zero() {
+        let mut t = NetworkTracker::new();
+        // A lifetime total of 52 GB must not become 52 GB per second.
+        let n = t.observe(
+            1_000,
+            &[iface(1, "Ethernet", 52_000_000_000, 1_000_000_000)],
+        );
+
+        assert_eq!(
+            n.receive_bytes_per_sec, None,
+            "no previous sample means no rate"
+        );
+        assert_eq!(n.transmit_bytes_per_sec, None);
+        assert_eq!(n.interfaces.len(), 1, "the interface is still listed");
+        assert_eq!(n.interfaces[0].receive_bytes_per_sec, None);
+        assert_eq!(n.interfaces[0].name, "Ethernet");
+    }
+
+    #[test]
+    fn a_second_network_sample_produces_a_rate() {
+        let mut t = NetworkTracker::new();
+        t.observe(1_000, &[iface(1, "Ethernet", 1_000, 500)]);
+        let n = t.observe(2_000, &[iface(1, "Ethernet", 3_000, 1_500)]);
+
+        assert_eq!(n.receive_bytes_per_sec, Some(2_000.0));
+        assert_eq!(n.transmit_bytes_per_sec, Some(1_000.0));
+    }
+
+    #[test]
+    fn a_network_counter_reset_reports_nothing_for_that_interval_and_recovers() {
+        let mut t = NetworkTracker::new();
+        t.observe(1_000, &[iface(1, "Ethernet", 900_000, 900_000)]);
+
+        // The adapter was disabled and re-enabled: counters restart.
+        let reset = t.observe(2_000, &[iface(1, "Ethernet", 100, 50)]);
+        assert_eq!(reset.receive_bytes_per_sec, None);
+        assert_eq!(reset.interfaces[0].receive_bytes_per_sec, None);
+
+        // The next interval is measured against the new baseline.
+        let after = t.observe(3_000, &[iface(1, "Ethernet", 1_100, 550)]);
+        assert_eq!(after.receive_bytes_per_sec, Some(1_000.0));
+        assert_eq!(after.transmit_bytes_per_sec, Some(500.0));
+    }
+
+    #[test]
+    fn an_interface_appearing_contributes_nothing_rather_than_its_lifetime_total() {
+        // The bug this guards: a VPN connecting mid-session brings a counter
+        // with several gigabytes on it, and treating that as one interval's
+        // traffic prints a multi-gigabyte spike exactly once.
+        let mut t = NetworkTracker::new();
+        t.observe(1_000, &[iface(1, "Ethernet", 1_000, 1_000)]);
+
+        let n = t.observe(
+            2_000,
+            &[
+                iface(1, "Ethernet", 2_000, 2_000),
+                iface(2, "VPN", 9_000_000_000, 9_000_000_000),
+            ],
+        );
+
+        // Only the interface that had a previous sample counts.
+        assert_eq!(n.receive_bytes_per_sec, Some(1_000.0));
+        assert_eq!(n.interfaces.len(), 2, "the new interface is still listed");
+        let vpn = n.interfaces.iter().find(|i| i.name == "VPN").unwrap();
+        assert_eq!(vpn.receive_bytes_per_sec, None);
+
+        // And it does count from its second observation.
+        let n = t.observe(
+            3_000,
+            &[
+                iface(1, "Ethernet", 3_000, 3_000),
+                iface(2, "VPN", 9_000_002_000, 9_000_002_000),
+            ],
+        );
+        assert_eq!(n.receive_bytes_per_sec, Some(3_000.0));
+    }
+
+    #[test]
+    fn an_interface_disappearing_is_forgotten_and_cannot_be_resurrected() {
+        let mut t = NetworkTracker::new();
+        t.observe(
+            1_000,
+            &[iface(1, "Ethernet", 1_000, 0), iface(2, "VPN", 5_000, 0)],
+        );
+        t.observe(
+            2_000,
+            &[iface(1, "Ethernet", 2_000, 0), iface(2, "VPN", 6_000, 0)],
+        );
+
+        // The VPN drops.
+        let gone = t.observe(3_000, &[iface(1, "Ethernet", 3_000, 0)]);
+        assert_eq!(gone.interfaces.len(), 1);
+        assert_eq!(gone.receive_bytes_per_sec, Some(1_000.0));
+
+        // It comes back with a reset counter. Its stale sample must not have
+        // been kept, or this would report a negative or absurd rate.
+        let back = t.observe(
+            4_000,
+            &[iface(1, "Ethernet", 4_000, 0), iface(2, "VPN", 10, 0)],
+        );
+        let vpn = back.interfaces.iter().find(|i| i.name == "VPN").unwrap();
+        assert_eq!(vpn.receive_bytes_per_sec, None);
+        assert_eq!(back.receive_bytes_per_sec, Some(1_000.0));
+    }
+
+    #[test]
+    fn zero_elapsed_time_between_network_samples_reports_nothing() {
+        let mut t = NetworkTracker::new();
+        t.observe(1_000, &[iface(1, "Ethernet", 1_000, 0)]);
+        let n = t.observe(1_000, &[iface(1, "Ethernet", 9_000, 0)]);
+        assert_eq!(n.receive_bytes_per_sec, None);
+    }
+
+    #[test]
+    fn multiple_interfaces_sum_into_the_machine_total() {
+        let mut t = NetworkTracker::new();
+        t.observe(
+            1_000,
+            &[
+                iface(1, "Ethernet", 0, 0),
+                iface(2, "Wi-Fi", 0, 0),
+                iface(3, "VPN", 0, 0),
+            ],
+        );
+        let n = t.observe(
+            2_000,
+            &[
+                iface(1, "Ethernet", 1_000, 100),
+                iface(2, "Wi-Fi", 2_000, 200),
+                iface(3, "VPN", 3_000, 300),
+            ],
+        );
+
+        assert_eq!(n.receive_bytes_per_sec, Some(6_000.0));
+        assert_eq!(n.transmit_bytes_per_sec, Some(600.0));
+        assert_eq!(n.interfaces.len(), 3);
+        // And each interface keeps its own figure.
+        assert_eq!(n.interfaces[1].receive_bytes_per_sec, Some(2_000.0));
+    }
+
+    #[test]
+    fn no_interfaces_at_all_is_not_a_machine_at_zero() {
+        let mut t = NetworkTracker::new();
+        t.observe(1_000, &[]);
+        let n = t.observe(2_000, &[]);
+        assert_eq!(n.receive_bytes_per_sec, None, "unmeasured is not idle");
+        assert!(n.interfaces.is_empty());
+    }
+
+    #[test]
+    fn interfaces_are_keyed_by_luid_not_by_name() {
+        // An adapter renamed between ticks must keep its rate.
+        let mut t = NetworkTracker::new();
+        t.observe(1_000, &[iface(7, "Ethernet", 1_000, 0)]);
+        let n = t.observe(2_000, &[iface(7, "Ethernet 2", 2_000, 0)]);
+        assert_eq!(n.receive_bytes_per_sec, Some(1_000.0));
     }
 
     #[test]

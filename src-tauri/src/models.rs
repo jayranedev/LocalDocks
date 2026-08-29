@@ -179,15 +179,26 @@ pub struct PortRow {
 
 /// TS: `interface SystemTelemetry` — machine-wide load, once per tick.
 ///
-/// Every field is optional, and that is the point. Windows exposes total CPU
-/// and physical memory reliably and cheaply; it does not expose per-process
-/// disk or network throughput, GPU utilisation or die temperature without
-/// either a driver, an elevated ETW session or a vendor SDK. docs/BACKEND.md
-/// forbids inventing a number to fill a slot, so anything not measured is
-/// `None` and renders as "—".
+/// # Available versus unavailable
 ///
-/// `None` therefore always means "not measured", never "measured as zero". A
-/// zero here is a real zero.
+/// Every reading is `Option`, and `None` always means **not measured** — never
+/// "measured as zero". A zero here is a real zero. That distinction is the
+/// whole contract: docs/BACKEND.md forbids inventing a number to fill a slot,
+/// and a dashboard that shows 0 °C because a provider failed is worse than one
+/// that shows nothing, because the reader cannot tell the difference.
+///
+/// It applies at two levels. A `None` on a whole section — `network`, `gpus`,
+/// `thermal` — means the provider is not present on this machine at all: no
+/// WDDM 2.0 driver, no ACPI thermal zones. A `None` on a single rate inside a
+/// present section means the value could not be computed *this tick*, almost
+/// always because it is the first sample and a rate needs two.
+///
+/// # Shape
+///
+/// CPU and memory stay flat because they were already flat and nothing here
+/// requires changing them. Network nests one level, and only because it
+/// genuinely has per-interface detail that the machine-wide figure is derived
+/// from. No level of nesting exists for extensibility alone.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemTelemetry {
@@ -200,11 +211,67 @@ pub struct SystemTelemetry {
     pub per_core_percent: Option<Vec<f32>>,
     /// How many logical processors the CPU percentages are divided by.
     pub logical_processors: u32,
+    /// Physical memory installed in the machine. Not to be confused with
+    /// `ProcessRow.memory_bytes`, which is one process's working set — the two
+    /// are never summed or compared.
     pub memory_total_bytes: Option<u64>,
     pub memory_used_bytes: Option<u64>,
     /// Used as a share of total, 0–100. Carried explicitly rather than derived
     /// in the UI so the two numbers can never disagree.
     pub memory_percent: Option<f32>,
+    /// `None` if the interface table could not be read at all.
+    pub network: Option<NetworkTelemetry>,
+}
+
+/// TS: `interface NetworkTelemetry`
+///
+/// Throughput is derived from cumulative octet counters, never read as an
+/// instantaneous rate — `MIB_IF_ROW2` reports bytes since the interface came
+/// up, so a rate needs two samples and an elapsed time.
+///
+/// The machine-wide figures are the sum of the per-interface rates that could
+/// actually be computed. An interface that appeared this tick contributes
+/// nothing rather than its whole lifetime total, which would otherwise show as
+/// a multi-gigabyte spike the moment a VPN connects.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkTelemetry {
+    pub receive_bytes_per_sec: Option<f64>,
+    pub transmit_bytes_per_sec: Option<f64>,
+    /// The interfaces the totals were computed from: operational, non-loopback
+    /// and not a filter interface. Never every row in the table — this machine
+    /// reports 50, of which 47 are tunnels, filters and disconnected adapters.
+    pub interfaces: Vec<NetworkInterface>,
+}
+
+/// TS: `interface NetworkInterface`
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkInterface {
+    /// The name the user sees in Windows, e.g. "Ethernet".
+    pub name: String,
+    /// The adapter's own description, e.g. "Realtek Gaming GbE Family
+    /// Controller".
+    pub description: String,
+    pub receive_bytes_per_sec: Option<f64>,
+    pub transmit_bytes_per_sec: Option<f64>,
+    /// Negotiated receive link speed, bits per second. `None` when the adapter
+    /// does not report one.
+    pub link_speed_bits_per_sec: Option<u64>,
+}
+
+/// TS: `interface ScanTiming` — how long this tick took, in milliseconds.
+///
+/// Published rather than logged because the cost of a monitoring tool is the
+/// user's business, and because a telemetry provider that becomes slow on some
+/// machine should be visible without a debug build.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanTiming {
+    pub total_millis: f64,
+    pub processes_millis: f64,
+    pub ports_millis: f64,
+    pub telemetry_millis: f64,
 }
 
 /// TS: `interface Snapshot` — everything one sampler tick produces.
@@ -223,6 +290,8 @@ pub struct Snapshot {
     pub conflicts: Option<u32>,
     /// Machine-wide load for this tick.
     pub system: SystemTelemetry,
+    /// What this tick cost.
+    pub timing: ScanTiming,
     /// Which Developer Registry produced the `relevance` on every service in
     /// this snapshot. Shipped so a classification someone disagrees with can
     /// be pinned to a specific version of the tables.
@@ -313,6 +382,7 @@ mod tests {
             ports: Vec::new(),
             conflicts: None,
             system: SystemTelemetry::default(),
+            timing: ScanTiming::default(),
             registry_version: 1,
         };
         let v = serde_json::to_value(&s).unwrap();
@@ -329,6 +399,8 @@ mod tests {
         assert!(v["conflicts"].is_null());
 
         assert_eq!(v["registryVersion"], 1);
+        assert!(v.get("timing").is_some(), "timing is part of the contract");
+        assert_eq!(v["timing"]["totalMillis"], 0.0);
         // Unmeasured telemetry is null, never a confident zero.
         for key in [
             "cpuPercent",
@@ -340,6 +412,106 @@ mod tests {
             assert!(v["system"][key].is_null(), "system.{key} should be null");
         }
         assert_eq!(v["system"]["logicalProcessors"], 0);
+    }
+
+    /// The contract's whole promise about telemetry: a key that is not
+    /// measured is present and null, never absent and never zero. A missing
+    /// key deserialises to `undefined` in TypeScript and silently skips every
+    /// `=== null` check the UI uses to decide what to render.
+    #[test]
+    fn unmeasured_telemetry_is_present_and_null_at_every_level() {
+        let v = serde_json::to_value(SystemTelemetry::default()).unwrap();
+
+        for key in [
+            "cpuPercent",
+            "perCorePercent",
+            "logicalProcessors",
+            "memoryTotalBytes",
+            "memoryUsedBytes",
+            "memoryPercent",
+            "network",
+        ] {
+            assert!(
+                v.get(key).is_some(),
+                "system.{key} is missing from the contract"
+            );
+        }
+        for key in [
+            "cpuPercent",
+            "perCorePercent",
+            "memoryTotalBytes",
+            "memoryUsedBytes",
+            "memoryPercent",
+            "network",
+        ] {
+            assert!(
+                v[key].is_null(),
+                "system.{key} should be null, got {}",
+                v[key]
+            );
+        }
+        // The one field that is a count rather than a measurement.
+        assert_eq!(v["logicalProcessors"], 0);
+    }
+
+    #[test]
+    fn a_populated_telemetry_snapshot_serialises_in_camel_case_throughout() {
+        let telemetry = SystemTelemetry {
+            cpu_percent: Some(12.5),
+            per_core_percent: Some(vec![10.0, 15.0]),
+            logical_processors: 2,
+            memory_total_bytes: Some(16_000_000_000),
+            memory_used_bytes: Some(8_000_000_000),
+            memory_percent: Some(50.0),
+            network: Some(NetworkTelemetry {
+                receive_bytes_per_sec: Some(1_024.0),
+                transmit_bytes_per_sec: None,
+                interfaces: vec![NetworkInterface {
+                    name: "Ethernet".into(),
+                    description: "Realtek Gaming GbE".into(),
+                    receive_bytes_per_sec: Some(1_024.0),
+                    transmit_bytes_per_sec: None,
+                    link_speed_bits_per_sec: Some(1_000_000_000),
+                }],
+            }),
+        };
+        let v = serde_json::to_value(&telemetry).unwrap();
+
+        assert_eq!(v["network"]["receiveBytesPerSec"], 1_024.0);
+        // A rate that could not be computed is null inside a section that is
+        // otherwise present — a different fact from the whole section missing.
+        assert!(v["network"]["transmitBytesPerSec"].is_null());
+        assert_eq!(
+            v["network"]["interfaces"][0]["linkSpeedBitsPerSec"],
+            1_000_000_000u64
+        );
+        // Nothing snake_case anywhere in the tree.
+        let text = serde_json::to_string(&telemetry).unwrap();
+        for leaked in [
+            "receive_bytes_per_sec",
+            "per_core_percent",
+            "link_speed_bits_per_sec",
+        ] {
+            assert!(
+                !text.contains(leaked),
+                "snake_case leaked into JSON: {leaked}"
+            );
+        }
+    }
+
+    #[test]
+    fn scan_timing_serialises_as_four_millisecond_figures() {
+        let v = serde_json::to_value(ScanTiming {
+            total_millis: 21.5,
+            processes_millis: 18.0,
+            ports_millis: 1.8,
+            telemetry_millis: 1.7,
+        })
+        .unwrap();
+        assert_eq!(v["totalMillis"], 21.5);
+        assert_eq!(v["processesMillis"], 18.0);
+        assert_eq!(v["portsMillis"], 1.8);
+        assert_eq!(v["telemetryMillis"], 1.7);
     }
 
     #[test]
