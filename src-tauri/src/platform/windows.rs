@@ -8,4 +8,5 @@ pub mod control;
 pub mod network;
 pub mod ports;
 pub mod process;
+pub mod storage;
 pub mod system;
