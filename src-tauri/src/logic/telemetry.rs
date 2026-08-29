@@ -37,6 +37,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::models::{
     GpuTelemetry, NetworkInterface, NetworkTelemetry, StorageDrive, StorageTelemetry,
+    ThermalTelemetry, ThermalZone,
 };
 
 /// One reading of the idle/kernel/user counters, in 100 ns units.
@@ -458,6 +459,41 @@ fn adapter_entry(map: &mut BTreeMap<u64, GpuTelemetry>, luid: u64) -> &mut GpuTe
         dedicated_memory_total_bytes: None,
         shared_memory_used_bytes: None,
     })
+}
+
+// -------------------------------------------------------------------- thermal
+
+/// The coldest reading that could be a real component, in Kelvin.
+///
+/// Freezing point. A zone reporting below this is not measuring anything: 0 K
+/// is absolute zero, and the development machine this was built against reports
+/// exactly that for one of its three zones.
+const MIN_PLAUSIBLE_KELVIN: f64 = 273.15;
+
+/// The hottest reading that could be a real component, in Kelvin.
+///
+/// 125 °C, past the thermal shutdown point of any consumer part. Above this the
+/// zone is reporting a sentinel, a scaling error, or nothing.
+const MAX_PLAUSIBLE_KELVIN: f64 = 398.15;
+
+/// Turn ACPI zone readings into zones the UI can show.
+///
+/// The plausibility filter is the honesty in this function. A zone that reports
+/// 0 K becomes a zone with no reading, not a component at −273 °C, and not a
+/// zone quietly dropped — the firmware says the zone exists, so it is listed
+/// and marked as not reporting.
+pub fn map_thermal_zones(readings: &[(String, f64)]) -> ThermalTelemetry {
+    ThermalTelemetry {
+        zones: readings
+            .iter()
+            .map(|(name, kelvin)| ThermalZone {
+                name: name.clone(),
+                celsius: (MIN_PLAUSIBLE_KELVIN..=MAX_PLAUSIBLE_KELVIN)
+                    .contains(kelvin)
+                    .then(|| (kelvin - 273.15) as f32),
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -1057,6 +1093,53 @@ mod tests {
     #[test]
     fn no_gpu_sources_at_all_folds_to_an_empty_list() {
         assert!(fold_gpus(&[], &[], &[]).is_empty());
+    }
+
+    // --------------------------------------------------------------- thermal
+
+    #[test]
+    fn a_plausible_zone_reading_converts_from_kelvin() {
+        let t = map_thermal_zones(&[(r"\_TZ.TSZ0".into(), 331.0)]);
+        assert_eq!(t.zones.len(), 1);
+        assert_eq!(t.zones[0].name, r"\_TZ.TSZ0");
+        let c = t.zones[0].celsius.unwrap();
+        assert!((c - 57.85).abs() < 0.01, "got {c}");
+    }
+
+    /// The real case: the development machine reports a zone at absolute zero.
+    #[test]
+    fn a_zone_reporting_absolute_zero_is_listed_without_a_reading() {
+        let t = map_thermal_zones(&[(r"\_TZ.TZ01".into(), 0.0)]);
+        assert_eq!(t.zones.len(), 1, "a stub zone is listed, not dropped");
+        assert_eq!(t.zones[0].name, r"\_TZ.TZ01");
+        assert_eq!(
+            t.zones[0].celsius, None,
+            "0 K is not -273 °C, it is no reading"
+        );
+    }
+
+    #[test]
+    fn implausible_readings_are_rejected_at_both_ends() {
+        let readings: Vec<(String, f64)> = vec![
+            ("below freezing".into(), 250.0),
+            ("just at freezing".into(), 273.15),
+            ("hot but real".into(), 370.0),
+            ("past any shutdown point".into(), 500.0),
+            ("nonsense".into(), -40.0),
+        ];
+        let t = map_thermal_zones(&readings);
+
+        assert_eq!(t.zones.len(), 5, "every zone is listed");
+        assert_eq!(t.zones[0].celsius, None);
+        assert_eq!(t.zones[1].celsius, Some(0.0));
+        assert!(t.zones[2].celsius.is_some());
+        assert_eq!(t.zones[3].celsius, None);
+        assert_eq!(t.zones[4].celsius, None);
+    }
+
+    #[test]
+    fn a_machine_with_no_zones_maps_to_an_empty_list() {
+        assert!(map_thermal_zones(&[]).zones.is_empty());
     }
 
     #[test]

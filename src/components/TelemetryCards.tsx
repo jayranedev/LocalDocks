@@ -4,12 +4,13 @@ import type {
   NetworkTelemetry,
   StorageTelemetry,
   SystemTelemetry,
+  ThermalTelemetry,
 } from '../types';
 import { formatBytes, formatRate } from '../lib/format';
 import { SectionLabel } from './ui';
 
 /**
- * Machine-wide telemetry, one card per metric.
+ * Machine-wide telemetry: six cards, one per metric.
  *
  * Kept visually separate from the service tiles above because it measures a
  * different thing. Those numbers are the sum of what LocalDocks can see; these
@@ -47,6 +48,7 @@ export function TelemetryCards({ system }: { system: SystemTelemetry }) {
         <NetworkCard network={system.network} />
         <StorageCard storage={system.storage} />
         <GpuCard gpus={system.gpus} />
+        <ThermalCard thermal={system.thermal} />
       </div>
     </section>
   );
@@ -311,6 +313,50 @@ function GpuCard({ gpus }: { gpus: GpuTelemetry[] | null }) {
           {gpus.length - 1} other adapter{gpus.length === 2 ? '' : 's'} on this machine
         </p>
       )}
+    </Card>
+  );
+}
+
+function ThermalCard({ thermal }: { thermal: ThermalTelemetry | null }) {
+  if (thermal === null || thermal.zones.length === 0) {
+    return (
+      <Unavailable
+        label="THERMALS"
+        reason="This machine's firmware exposes no ACPI thermal zones. CPU and GPU package temperatures need a kernel driver, which LocalDocks does not ship."
+      />
+    );
+  }
+
+  const reporting = thermal.zones.filter((z) => z.celsius !== null);
+  const hottest = reporting.reduce<number | null>(
+    (max, z) => (max === null ? z.celsius : Math.max(max, z.celsius as number)),
+    null,
+  );
+
+  return (
+    <Card
+      label="THERMALS"
+      value={hottest === null ? '—' : `${hottest.toFixed(0)}°C`}
+      sub={
+        hottest === null
+          ? `${thermal.zones.length} zone${thermal.zones.length === 1 ? '' : 's'}, none reporting`
+          : `hottest of ${reporting.length} reporting zone${reporting.length === 1 ? '' : 's'}`
+      }
+    >
+      <div className="mt-2.5 space-y-1">
+        {thermal.zones.map((zone) => (
+          <Reading
+            key={zone.name}
+            label={zone.name.replace(/^\\_TZ\./, '')}
+            value={zone.celsius === null ? null : `${zone.celsius.toFixed(0)}°C`}
+            missing="not reporting"
+          />
+        ))}
+      </div>
+      {/* The honesty this card exists to carry: a zone is not a component. */}
+      <p className="mt-2 text-[10.5px] leading-[1.45] text-muted">
+        ACPI zones named by your firmware. These are not CPU or GPU package temperatures.
+      </p>
     </Card>
   );
 }

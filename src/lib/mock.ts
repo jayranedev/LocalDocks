@@ -306,6 +306,10 @@ export function buildSnapshot(): Snapshot {
 /**
  * Machine-wide load, drifting the way the real readings do.
  *
+ * Deliberately not all-available. The mock reports thermal as `null`, because
+ * most machines genuinely have no ACPI zones and a mock in which every card is
+ * populated would hide the unavailable states — which are the states most
+ * likely to be wrong and least likely to be seen during development.
  */
 function telemetry(): SystemTelemetry {
   const cores = 8;
@@ -315,9 +319,9 @@ function telemetry(): SystemTelemetry {
   const memoryTotalBytes = 16 * 1024 ** 3;
   const memoryUsedBytes = Math.round(drift(10.4, sequence, 0.3) * 1024 ** 3);
   const receive = Math.round(drift(240_000, sequence, 90_000));
+  const transmit = Math.round(drift(40_000, sequence + 3, 18_000));
   const read = Math.round(drift(1_400_000, sequence + 1, 900_000));
   const write = Math.round(drift(600_000, sequence + 4, 400_000));
-  const transmit = Math.round(drift(40_000, sequence + 3, 18_000));
 
   return {
     cpuPercent: Number(
@@ -364,6 +368,9 @@ function telemetry(): SystemTelemetry {
         sharedMemoryUsedBytes: Math.round(drift(0.07, sequence, 0.01) * 1024 ** 3),
       },
     ],
+    // Not every machine has ACPI zones, and the unavailable state has to be
+    // exercised somewhere.
+    thermal: null,
   };
 }
 
