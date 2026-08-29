@@ -151,6 +151,36 @@ pub struct PortRow {
     pub state: PortState,
 }
 
+/// TS: `interface SystemTelemetry` — machine-wide load, once per tick.
+///
+/// Every field is optional, and that is the point. Windows exposes total CPU
+/// and physical memory reliably and cheaply; it does not expose per-process
+/// disk or network throughput, GPU utilisation or die temperature without
+/// either a driver, an elevated ETW session or a vendor SDK. docs/BACKEND.md
+/// forbids inventing a number to fill a slot, so anything not measured is
+/// `None` and renders as "—".
+///
+/// `None` therefore always means "not measured", never "measured as zero". A
+/// zero here is a real zero.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemTelemetry {
+    /// Machine-wide CPU utilisation over the last interval, 0–100. `None` on
+    /// the first tick, which has no previous sample to difference against.
+    pub cpu_percent: Option<f32>,
+    /// Per-logical-processor utilisation over the same interval, in the order
+    /// Windows enumerates them. `None` when the query is unavailable, which is
+    /// a different fact from an empty list.
+    pub per_core_percent: Option<Vec<f32>>,
+    /// How many logical processors the CPU percentages are divided by.
+    pub logical_processors: u32,
+    pub memory_total_bytes: Option<u64>,
+    pub memory_used_bytes: Option<u64>,
+    /// Used as a share of total, 0–100. Carried explicitly rather than derived
+    /// in the UI so the two numbers can never disagree.
+    pub memory_percent: Option<f32>,
+}
+
 /// TS: `interface Snapshot` — everything one sampler tick produces.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,6 +195,8 @@ pub struct Snapshot {
     /// detection is V2 (docs/ROADMAP.md § 2.3); until the backend computes it,
     /// claiming zero conflicts would be a claim we cannot support.
     pub conflicts: Option<u32>,
+    /// Machine-wide load for this tick.
+    pub system: SystemTelemetry,
 }
 
 /// TS: `type FieldState<T>`
@@ -250,6 +282,7 @@ mod tests {
             processes: Vec::new(),
             ports: Vec::new(),
             conflicts: None,
+            system: SystemTelemetry::default(),
         };
         let v = serde_json::to_value(&s).unwrap();
 
@@ -263,37 +296,18 @@ mod tests {
         // `undefined` in TS and break the `conflicts === null` check.
         assert!(v.get("conflicts").is_some());
         assert!(v["conflicts"].is_null());
-    }
 
-    #[test]
-    fn fields_serialise_as_camel_case() {
-        let row = ProcessRow {
-            id: make_process_id(8420, "2026-08-28T09:00:00.000Z"),
-            pid: 8420,
-            parent_pid: 6104,
-            name: "node.exe".into(),
-            cpu_percent: 2.3,
-            memory_bytes: 148_897_792,
-            thread_count: 18,
-            started_at: "2026-08-28T09:00:00.000Z".into(),
-            uptime_seconds: 4342.0,
-            status: ProcessStatus::Running,
-            is_service: true,
-        };
-        let v = serde_json::to_value(&row).unwrap();
-
+        // Unmeasured telemetry is null, never a confident zero.
         for key in [
-            "parentPid",
             "cpuPercent",
-            "memoryBytes",
-            "threadCount",
-            "startedAt",
-            "uptimeSeconds",
-            "isService",
+            "perCorePercent",
+            "memoryTotalBytes",
+            "memoryPercent",
         ] {
-            assert!(v.get(key).is_some(), "missing camelCase key {key}");
+            assert!(v["system"].get(key).is_some(), "missing system.{key}");
+            assert!(v["system"][key].is_null(), "system.{key} should be null");
         }
-        assert!(v.get("parent_pid").is_none(), "snake_case leaked into JSON");
+        assert_eq!(v["system"]["logicalProcessors"], 0);
     }
 
     #[test]

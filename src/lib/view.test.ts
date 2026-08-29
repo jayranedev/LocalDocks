@@ -77,6 +77,14 @@ function snapshot(): Snapshot {
       port(400, 57621), // unrelated app
     ],
     conflicts: null,
+    system: {
+      cpuPercent: null,
+      perCorePercent: null,
+      logicalProcessors: 8,
+      memoryTotalBytes: null,
+      memoryUsedBytes: null,
+      memoryPercent: null,
+    },
   };
 }
 
@@ -170,6 +178,14 @@ describe('what developer mode must never become', () => {
       processes: [process(200, 100, name, true), process(999, 1, 'other.exe')],
       ports: [port(200, 5173)],
       conflicts: null,
+      system: {
+        cpuPercent: null,
+        perCorePercent: null,
+        logicalProcessors: 8,
+        memoryTotalBytes: null,
+        memoryUsedBytes: null,
+        memoryPercent: null,
+      },
     });
 
     const shapes = ['node.exe', 'python.exe', 'bun.exe', 'deno.exe', 'zig.exe', 'a.exe'].map(

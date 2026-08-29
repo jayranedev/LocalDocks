@@ -5,6 +5,7 @@ import type {
   Protocol,
   Service,
   Snapshot,
+  SystemTelemetry,
   TerminateRequest,
   TerminateResult,
 } from '../types';
@@ -236,6 +237,34 @@ export function buildSnapshot(): Snapshot {
     // Conflict detection is a backend concern and is not implemented (§B, V2).
     // null, not 0 — the UI must not claim "no conflicts" on no evidence.
     conflicts: null,
+    system: telemetry(),
+  };
+}
+
+/**
+ * Machine-wide load, drifting the way the real readings do.
+ *
+ * The unmeasured fields the real backend reports as null — network, disk, GPU,
+ * temperature — are simply absent from the contract, so there is nothing to
+ * fake here. That is the point.
+ */
+function telemetry(): SystemTelemetry {
+  const cores = 8;
+  const perCorePercent = Array.from({ length: cores }, (_, i) =>
+    Number(Math.min(100, drift(12 + i * 3, sequence + i * 5, 9)).toFixed(1)),
+  );
+  const memoryTotalBytes = 16 * 1024 ** 3;
+  const memoryUsedBytes = Math.round(drift(10.4, sequence, 0.3) * 1024 ** 3);
+
+  return {
+    cpuPercent: Number(
+      (perCorePercent.reduce((a, b) => a + b, 0) / perCorePercent.length).toFixed(1),
+    ),
+    perCorePercent,
+    logicalProcessors: cores,
+    memoryTotalBytes,
+    memoryUsedBytes,
+    memoryPercent: Number(((memoryUsedBytes / memoryTotalBytes) * 100).toFixed(1)),
   };
 }
 

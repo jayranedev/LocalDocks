@@ -3,6 +3,7 @@ import { formatBytes, formatCpu, isDualStack, primaryPort } from '../lib/format'
 import type { SnapshotView } from '../lib/view';
 import { MODE_HINTS, MODE_LABELS } from '../lib/view';
 import { Icon } from '../components/Icon';
+import { SystemStrip } from '../components/SystemStrip';
 import { Chip, PageHeader, PortBadge, SectionLabel, StatTile, StatusDot } from '../components/ui';
 
 interface Props {
@@ -69,7 +70,14 @@ export function Overview({ snapshot, view, intervalMs, onSelect }: Props) {
           }
           tone={conflicts === 0 ? 'success' : undefined}
         />
-        <StatTile label="MEMORY" value={formatBytes(totalMemory)} sub={`${formatCpu(totalCpu)} CPU across services`} />
+        {/* Explicitly "across services", not machine memory — the machine's
+            own figures are in the System strip below, where they cannot be
+            confused with this sum. */}
+        <StatTile
+          label="SERVICE MEMORY"
+          value={formatBytes(totalMemory)}
+          sub={`${formatCpu(totalCpu)} CPU across services`}
+        />
       </div>
 
       <div className="mb-[9px] flex items-baseline gap-2.5">
@@ -82,6 +90,8 @@ export function Overview({ snapshot, view, intervalMs, onSelect }: Props) {
           <OverviewRow key={s.id} service={s} onSelect={onSelect} />
         ))}
       </div>
+
+      <SystemStrip system={snapshot.system} />
     </div>
   );
 }
