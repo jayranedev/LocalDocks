@@ -17,18 +17,6 @@
 //! docs/BACKEND.md and will land with the commands that return them, per the
 //! rule that types appear when something needs them.
 
-// TEMPORARY — technical debt, remove in `feature/process-discovery`.
-//
-// The types below are the IPC contract, but only `Snapshot::empty` is
-// constructed so far, so the build emits five "never constructed" warnings
-// that would drown out real ones.
-//
-// TODO(process-discovery): delete this attribute once enumeration actually
-// constructs Service / ProcessRow / PortRow. From that point a dead-code
-// warning here is a genuine signal, and leaving the suppression in place
-// would hide real dead code rather than expected absence.
-#![allow(dead_code)]
-
 use serde::Serialize;
 
 /// Process identity: `{pid}-{startedAt}`.
@@ -42,6 +30,10 @@ pub fn make_process_id(pid: u32, started_at: &str) -> ProcessId {
 }
 
 /// TS: `type Protocol = 'TCP' | 'UDP'`
+/// Constructed by port discovery (docs/ROADMAP.md milestone 4). Suppressed
+/// narrowly rather than at module level so that dead code anywhere else in
+/// this file is a real warning.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Protocol {
@@ -50,6 +42,8 @@ pub enum Protocol {
 }
 
 /// TS: `interface Endpoint`
+/// Constructed by port discovery (docs/ROADMAP.md milestone 4).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Endpoint {
@@ -60,6 +54,8 @@ pub struct Endpoint {
 }
 
 /// TS: `Service['status'] = 'running' | 'stopped'`
+/// Constructed by service joining (docs/ROADMAP.md milestone 5).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceStatus {
@@ -76,10 +72,16 @@ pub enum ServiceStatus {
 #[serde(rename_all = "lowercase")]
 pub enum ProcessStatus {
     Running,
+    /// Unreachable today: Windows has no process-level wait state, so nothing
+    /// can observe it. Kept because the TypeScript union declares it — the
+    /// contract, not the current backend, decides what this enum contains.
+    #[allow(dead_code)]
     Sleeping,
 }
 
 /// TS: `PortRow['state'] = 'LISTENING'`
+/// Constructed by port discovery (docs/ROADMAP.md milestone 4).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PortState {
@@ -87,6 +89,8 @@ pub enum PortState {
 }
 
 /// TS: `interface Service` — tier 1, refreshed every sampler tick.
+/// Constructed by service joining (docs/ROADMAP.md milestone 5).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Service {
@@ -126,6 +130,8 @@ pub struct ProcessRow {
 }
 
 /// TS: `interface PortRow` — one row per socket, deliberately unmerged.
+/// Constructed by port discovery (docs/ROADMAP.md milestone 4).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortRow {
@@ -157,23 +163,6 @@ pub struct Snapshot {
     pub conflicts: Option<u32>,
 }
 
-impl Snapshot {
-    /// An empty snapshot for the given tick.
-    ///
-    /// Structurally valid and truthful: nothing has been enumerated yet, so
-    /// every collection is empty and `conflicts` is unknown.
-    pub fn empty(sequence: u64, captured_at: String) -> Self {
-        Self {
-            sequence,
-            captured_at,
-            services: Vec::new(),
-            processes: Vec::new(),
-            ports: Vec::new(),
-            conflicts: None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,8 +171,15 @@ mod tests {
     /// These are the assertions that would actually catch a drift from
     /// `src/types.ts`.
     #[test]
-    fn empty_snapshot_matches_the_typescript_shape() {
-        let s = Snapshot::empty(1, "2026-08-28T09:00:00.000Z".into());
+    fn an_empty_snapshot_matches_the_typescript_shape() {
+        let s = Snapshot {
+            sequence: 1,
+            captured_at: "2026-08-28T09:00:00.000Z".into(),
+            services: Vec::new(),
+            processes: Vec::new(),
+            ports: Vec::new(),
+            conflicts: None,
+        };
         let v = serde_json::to_value(&s).unwrap();
 
         assert_eq!(v["sequence"], 1);
@@ -233,9 +229,18 @@ mod tests {
     fn enums_serialise_with_the_casing_the_contract_expects() {
         assert_eq!(serde_json::to_value(Protocol::Tcp).unwrap(), "TCP");
         assert_eq!(serde_json::to_value(Protocol::Udp).unwrap(), "UDP");
-        assert_eq!(serde_json::to_value(PortState::Listening).unwrap(), "LISTENING");
-        assert_eq!(serde_json::to_value(ServiceStatus::Running).unwrap(), "running");
-        assert_eq!(serde_json::to_value(ProcessStatus::Sleeping).unwrap(), "sleeping");
+        assert_eq!(
+            serde_json::to_value(PortState::Listening).unwrap(),
+            "LISTENING"
+        );
+        assert_eq!(
+            serde_json::to_value(ServiceStatus::Running).unwrap(),
+            "running"
+        );
+        assert_eq!(
+            serde_json::to_value(ProcessStatus::Sleeping).unwrap(),
+            "sleeping"
+        );
     }
 
     #[test]
