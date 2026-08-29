@@ -1,18 +1,21 @@
 //! Process enumeration via the Toolhelp snapshot API.
 //!
-//! Two passes, because no single Win32 call gives both halves of what a
-//! process identity needs:
+//! Two passes, because no single Win32 call gives everything a process row
+//! needs:
 //!
 //!   1. `CreateToolhelp32Snapshot` + `Process32FirstW`/`Process32NextW` walk
 //!      every process and give PID, parent PID, executable name and thread
 //!      count without opening a single handle.
-//!   2. `OpenProcess` + `GetProcessTimes` read the creation time, which is the
-//!      other half of the identity `{pid}-{startedAt}`. This is the pass that
-//!      can be refused, and refusal is expected — see `CreationTime`.
+//!   2. `OpenProcess` then answers, from one handle, the three things that
+//!      need one: creation time (`GetProcessTimes`, the other half of the
+//!      identity `{pid}-{startedAt}`), cumulative CPU time (same call — the
+//!      input to the sampler's delta maths) and working set
+//!      (`GetProcessMemoryInfo`). This is the pass that can be refused, and
+//!      refusal is expected — see `ProcessProbe`.
 //!
 //! The handle is requested with `PROCESS_QUERY_LIMITED_INFORMATION`, the
-//! narrowest right that answers the question. LocalDocks runs unelevated by
-//! design (docs/ARCHITECTURE.md), so asking for more would turn a working
+//! narrowest right that answers all three questions. LocalDocks runs unelevated
+//! by design (docs/ARCHITECTURE.md), so asking for more would turn a working
 //! read into an access-denied on processes we can otherwise see.
 
 use std::mem::size_of;
@@ -24,6 +27,7 @@ use windows::Win32::Foundation::{
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
+use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -31,22 +35,35 @@ use windows::Win32::System::Threading::{
 use crate::errors::SystemError;
 use crate::time;
 
-/// When a process started, or why we do not know.
+/// What one `OpenProcess` yielded, or why it yielded nothing.
 ///
 /// docs/BACKEND.md: "AccessDenied is a value, not an error." A protected
 /// process refusing to be opened is a fact about that process, not a failure of
 /// the scan, so it is modelled here as data the caller must handle rather than
 /// as an `Err` that would abort enumeration.
+///
+/// The three readings live together because they come from one handle and share
+/// one failure mode. A process that exits between the two calls yields `Gone`
+/// rather than a half-filled row: a row with a real creation time and a zero
+/// working set would look like a measurement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CreationTime {
-    /// Read from `GetProcessTimes`, as Unix milliseconds.
-    Known(i64),
+pub enum ProcessProbe {
+    Read {
+        /// Process creation time, Unix milliseconds. Half of the identity.
+        created_at_millis: i64,
+        /// Kernel + user time since the process started, in 100 ns units.
+        /// Cumulative — a percentage needs two of these (`logic::cpu`).
+        cpu_time_100ns: u64,
+        /// Working set: the number Task Manager's "Memory" column shows.
+        working_set_bytes: u64,
+    },
     /// `OpenProcess` was refused. Expected for protected processes — the Idle
     /// process, System, Registry, csrss, and anti-malware services all refuse
     /// even `PROCESS_QUERY_LIMITED_INFORMATION` to an unelevated caller.
     AccessDenied,
-    /// The process exited between the Toolhelp snapshot and the open. A scan
-    /// is not atomic, so this is a normal race, not an error.
+    /// The process exited between the Toolhelp snapshot and the open, or
+    /// between the open and one of the reads. A scan is not atomic, so this is
+    /// a normal race, not an error.
     Gone,
 }
 
@@ -64,14 +81,15 @@ pub struct RawProcess {
     /// part of this milestone.
     pub name: String,
     pub thread_count: u32,
-    pub created_at: CreationTime,
+    pub probe: ProcessProbe,
 }
 
 /// A handle that closes itself.
 ///
-/// Enumeration runs once per sampler tick. A handle leaked on an early return
-/// would be a leak measured in handles per second, and the paths below have
-/// several early returns. Making the close structural removes the question.
+/// Enumeration runs on every sampler tick and opens a handle per process. A
+/// handle leaked on an early return would be a leak measured in hundreds per
+/// second, and the paths below have several early returns. Making the close
+/// structural removes the question.
 struct OwnedHandle(HANDLE);
 
 impl Drop for OwnedHandle {
@@ -89,7 +107,7 @@ impl Drop for OwnedHandle {
 /// Enumerate every process visible to the current user.
 ///
 /// Returns `Err` only when the snapshot itself could not be taken — that is a
-/// real scan failure. Per-process refusals are carried in `CreationTime` and
+/// real scan failure. Per-process refusals are carried in `ProcessProbe` and
 /// never abort the walk.
 pub fn enumerate() -> Result<Vec<RawProcess>, SystemError> {
     // SAFETY: TH32CS_SNAPPROCESS with PID 0 is the documented way to snapshot
@@ -113,7 +131,7 @@ pub fn enumerate() -> Result<Vec<RawProcess>, SystemError> {
         return Err(to_system_error("Process32FirstW", &e));
     }
 
-    let mut processes = Vec::with_capacity(256);
+    let mut processes = Vec::with_capacity(400);
 
     loop {
         processes.push(RawProcess {
@@ -121,7 +139,7 @@ pub fn enumerate() -> Result<Vec<RawProcess>, SystemError> {
             parent_pid: entry.th32ParentProcessID,
             name: exe_name(&entry.szExeFile),
             thread_count: entry.cntThreads,
-            created_at: creation_time(entry.th32ProcessID),
+            probe: probe(entry.th32ProcessID),
         });
 
         // SAFETY: same invariants as the Process32FirstW call above.
@@ -145,14 +163,14 @@ pub fn enumerate() -> Result<Vec<RawProcess>, SystemError> {
     Ok(processes)
 }
 
-/// Read a process's creation time, or record why we could not.
-fn creation_time(pid: u32) -> CreationTime {
+/// Open a process and read the three handle-only fields, or record why not.
+fn probe(pid: u32) -> ProcessProbe {
     // PID 0 is the Idle "process", which is a scheduler bookkeeping entry
     // rather than a process. OpenProcess rejects it with a parameter error;
     // naming that here keeps it out of the access-denied count, which should
     // mean "refused", not "does not exist".
     if pid == 0 {
-        return CreationTime::Gone;
+        return ProcessProbe::Gone;
     }
 
     // SAFETY: no pointers are passed; the returned handle is taken into
@@ -162,14 +180,14 @@ fn creation_time(pid: u32) -> CreationTime {
         Err(e) => {
             let code = e.code();
             if code == ERROR_ACCESS_DENIED.to_hresult() {
-                return CreationTime::AccessDenied;
+                return ProcessProbe::AccessDenied;
             }
             if code == ERROR_INVALID_PARAMETER.to_hresult() {
                 // The documented result for a PID that no longer exists.
-                return CreationTime::Gone;
+                return ProcessProbe::Gone;
             }
             log::debug!("OpenProcess({pid}) failed unexpectedly: {e}");
-            return CreationTime::AccessDenied;
+            return ProcessProbe::AccessDenied;
         }
     };
 
@@ -181,16 +199,51 @@ fn creation_time(pid: u32) -> CreationTime {
     // SAFETY: all four out-params are live FILETIMEs owned by this frame, and
     // the handle carries PROCESS_QUERY_LIMITED_INFORMATION, which is the right
     // GetProcessTimes requires.
-    match unsafe { GetProcessTimes(handle.0, &mut created, &mut exited, &mut kernel, &mut user) } {
-        Ok(()) => CreationTime::Known(time::filetime_to_unix_millis(
+    if let Err(e) =
+        unsafe { GetProcessTimes(handle.0, &mut created, &mut exited, &mut kernel, &mut user) }
+    {
+        log::debug!("GetProcessTimes({pid}) failed: {e}");
+        return ProcessProbe::Gone;
+    }
+
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        ..Default::default()
+    };
+
+    // SAFETY: `counters` is a live, correctly sized PROCESS_MEMORY_COUNTERS
+    // owned by this frame, and `cb` is set as the API requires.
+    if let Err(e) = unsafe {
+        GetProcessMemoryInfo(
+            handle.0,
+            &mut counters,
+            size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        )
+    } {
+        // Treated as `Gone` rather than as a zero: the overwhelmingly likely
+        // cause of failing here after GetProcessTimes just succeeded is that
+        // the process exited in between.
+        log::debug!("GetProcessMemoryInfo({pid}) failed: {e}");
+        return ProcessProbe::Gone;
+    }
+
+    ProcessProbe::Read {
+        created_at_millis: time::filetime_to_unix_millis(
             created.dwLowDateTime,
             created.dwHighDateTime,
-        )),
-        Err(e) => {
-            log::debug!("GetProcessTimes({pid}) failed: {e}");
-            CreationTime::Gone
-        }
+        ),
+        cpu_time_100ns: filetime_ticks(&kernel).saturating_add(filetime_ticks(&user)),
+        working_set_bytes: counters.WorkingSetSize as u64,
     }
+}
+
+/// A FILETIME as a plain 64-bit tick count.
+///
+/// Kernel and user time are durations, not instants, so unlike the creation
+/// time they get no epoch adjustment — they are already "100 ns units of CPU
+/// burned" and are summed as-is.
+fn filetime_ticks(t: &FILETIME) -> u64 {
+    ((t.dwHighDateTime as u64) << 32) | (t.dwLowDateTime as u64)
 }
 
 /// `szExeFile` is a fixed 260-wide buffer; the name is everything before the
@@ -231,6 +284,15 @@ mod tests {
         assert_eq!(exe_name(&[0u16; 260]), "");
     }
 
+    #[test]
+    fn filetime_ticks_reassembles_both_halves() {
+        let t = FILETIME {
+            dwLowDateTime: 0x8000_0001,
+            dwHighDateTime: 0x0000_002A,
+        };
+        assert_eq!(filetime_ticks(&t), 0x0000_002A_8000_0001);
+    }
+
     /// An invariant test rather than a count test: the number of processes on
     /// a machine is not a fact a test may assert. What must hold is that the
     /// walk succeeds, finds the caller, and reports plausible values.
@@ -251,11 +313,21 @@ mod tests {
 
         assert!(!found.name.is_empty(), "the caller's name must be readable");
         assert!(found.thread_count >= 1, "a live process has threads");
-        assert!(
-            matches!(found.created_at, CreationTime::Known(ms) if ms > 0),
-            "a process can always read its own creation time, got {:?}",
-            found.created_at
-        );
+
+        match found.probe {
+            ProcessProbe::Read {
+                created_at_millis,
+                working_set_bytes,
+                ..
+            } => {
+                assert!(created_at_millis > 0, "a process knows when it started");
+                assert!(
+                    working_set_bytes > 0,
+                    "a running process occupies memory, got {working_set_bytes}"
+                );
+            }
+            other => panic!("a process can always probe itself, got {other:?}"),
+        }
     }
 
     /// PIDs are unique at any instant. A duplicate means the walk re-read an
@@ -273,14 +345,53 @@ mod tests {
     /// of the outcome, not how many processes land in each bucket — that
     /// depends on what is running and on whether the run is elevated.
     #[test]
-    fn every_process_reports_a_creation_time_outcome() {
+    fn every_process_reports_a_probe_outcome() {
         let processes = enumerate().expect("process enumeration must succeed");
         for p in &processes {
-            match p.created_at {
-                CreationTime::Known(ms) => {
-                    assert!(ms > 0, "pid {} reported a known but zero start", p.pid)
-                }
-                CreationTime::AccessDenied | CreationTime::Gone => {}
+            match p.probe {
+                ProcessProbe::Read {
+                    created_at_millis, ..
+                } => assert!(
+                    created_at_millis > 0,
+                    "pid {} reported a readable but zero start",
+                    p.pid
+                ),
+                ProcessProbe::AccessDenied | ProcessProbe::Gone => {}
+            }
+        }
+    }
+
+    /// Cumulative CPU time can only go up. Two scans a moment apart must not
+    /// show a process's total decreasing, which is the assumption the whole
+    /// delta calculation rests on.
+    #[test]
+    fn cumulative_cpu_time_never_decreases_between_scans() {
+        use std::collections::HashMap;
+
+        let cpu = |ps: &[RawProcess]| -> HashMap<(u32, i64), u64> {
+            ps.iter()
+                .filter_map(|p| match p.probe {
+                    ProcessProbe::Read {
+                        created_at_millis,
+                        cpu_time_100ns,
+                        ..
+                    } => Some(((p.pid, created_at_millis), cpu_time_100ns)),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let first = cpu(&enumerate().expect("first scan"));
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let second = cpu(&enumerate().expect("second scan"));
+
+        for (key, before) in &first {
+            if let Some(after) = second.get(key) {
+                assert!(
+                    after >= before,
+                    "pid {} cpu time went backwards: {before} -> {after}",
+                    key.0
+                );
             }
         }
     }

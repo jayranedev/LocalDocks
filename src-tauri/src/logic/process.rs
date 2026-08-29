@@ -1,12 +1,12 @@
 //! Mapping enumerated processes onto the `ProcessRow` contract.
 //!
-//! This is where the honesty rules bite. `ProcessRow` has eleven fields;
-//! Toolhelp plus `GetProcessTimes` can truthfully fill seven of them. The other
-//! four are handled explicitly below rather than quietly filled in, and each
-//! carries the reason it holds the value it holds.
+//! Pure: it takes what the platform layer already gathered and produces IPC
+//! shapes. The one piece of state it touches is the `CpuTracker`, which is
+//! itself pure — it remembers numbers, not handles.
 
+use crate::logic::cpu::{CpuObservation, CpuTracker};
 use crate::models::{make_process_id, ProcessRow, ProcessStatus};
-use crate::platform::windows::process::{CreationTime, RawProcess};
+use crate::platform::windows::process::{ProcessProbe, RawProcess};
 use crate::time;
 
 /// The result of mapping one scan.
@@ -17,48 +17,42 @@ use crate::time;
 #[derive(Debug, Clone, Default)]
 pub struct ProcessMapping {
     pub rows: Vec<ProcessRow>,
-    /// Enumerated, but the app may not open them. See the module note on why
+    /// Enumerated, but the app may not open them. See the note below on why
     /// these cannot become rows.
     pub access_denied: u32,
-    /// Enumerated, then exited before their creation time could be read.
+    /// Enumerated, then exited before they could be read.
     pub exited_during_scan: u32,
 }
 
-/// Placeholder CPU usage.
-///
-/// CPU percent is a rate, and a rate needs two samples: `GetProcessTimes`
-/// returns cumulative kernel and user time, so a single scan cannot compute it
-/// at any level of effort. The sampler (docs/ROADMAP.md milestone 3) is what
-/// makes this measurable.
-///
-/// Zero is not a measurement here, and the UI cannot currently tell the
-/// difference — `cpuPercent` is `number`, not `number | null`, so it renders as
-/// a confident "0.0%". That is the same problem `Snapshot.conflicts` solved by
-/// being nullable, and it wants the same fix.
-const CPU_NOT_MEASURED: f32 = 0.0;
-
-/// Placeholder memory usage.
-///
-/// Unlike CPU this is readable in a single call, but it needs
-/// `GetProcessMemoryInfo` from `Win32_System_ProcessStatus` — an API outside
-/// this milestone's brief. Left at zero and reported rather than reached for
-/// unasked.
-const MEMORY_NOT_MEASURED: u64 = 0;
-
-/// Turn enumerated processes into contract rows.
+/// Turn enumerated processes into contract rows, scoring CPU on the way.
 ///
 /// `captured_at_millis` is the single instant the whole snapshot is measured
 /// against, so every `uptimeSeconds` in one tick shares a reference point
-/// instead of drifting by however long the scan took.
-pub fn map_processes(raw: &[RawProcess], captured_at_millis: i64) -> ProcessMapping {
+/// instead of drifting by however long the scan took, and every CPU percentage
+/// is a rate over the same window.
+pub fn map_processes(
+    raw: &[RawProcess],
+    captured_at_millis: i64,
+    cpu: &mut CpuTracker,
+) -> ProcessMapping {
     let mut mapping = ProcessMapping {
         rows: Vec::with_capacity(raw.len()),
         ..Default::default()
     };
 
+    // Identify first, so the CPU tracker sees the whole scan at once. Scoring
+    // per-process inside the loop would work, but folding the scan in one go is
+    // what lets the tracker retire processes that vanished this tick.
+    let mut readable = Vec::with_capacity(raw.len());
+    let mut observations = Vec::with_capacity(raw.len());
+
     for p in raw {
-        let created_at_millis = match p.created_at {
-            CreationTime::Known(ms) => ms,
+        let (created_at_millis, cpu_time_100ns, working_set_bytes) = match p.probe {
+            ProcessProbe::Read {
+                created_at_millis,
+                cpu_time_100ns,
+                working_set_bytes,
+            } => (created_at_millis, cpu_time_100ns, working_set_bytes),
             // Excluded, not hidden. A process whose creation time is unreadable
             // has no `{pid}-{startedAt}` identity, and the contract has no
             // field for a row without one. Emitting it with a synthesised
@@ -66,28 +60,43 @@ pub fn map_processes(raw: &[RawProcess], captured_at_millis: i64) -> ProcessMapp
             // terminate and is not — the exact failure the identity model
             // exists to prevent. The count is the honest alternative until
             // `ProcessRow` can express "seen but not readable".
-            CreationTime::AccessDenied => {
+            ProcessProbe::AccessDenied => {
                 mapping.access_denied += 1;
                 continue;
             }
-            CreationTime::Gone => {
+            ProcessProbe::Gone => {
                 mapping.exited_during_scan += 1;
                 continue;
             }
         };
 
         let started_at = time::to_iso8601(created_at_millis);
+        let id = make_process_id(p.pid, &started_at);
 
+        observations.push(CpuObservation {
+            id: id.clone(),
+            cpu_time_100ns,
+            created_at_millis,
+        });
+        readable.push((p, id, started_at, created_at_millis, working_set_bytes));
+    }
+
+    let percentages = cpu.observe(captured_at_millis, &observations);
+
+    for (p, id, started_at, created_at_millis, working_set_bytes) in readable {
         mapping.rows.push(ProcessRow {
-            id: make_process_id(p.pid, &started_at),
+            // A process on its very first tick of a run whose creation time
+            // landed in this same millisecond has no measurable window yet.
+            // That is one tick, and it resolves itself on the next one.
+            cpu_percent: percentages.get(&id).copied().unwrap_or(0.0),
+            id,
             pid: p.pid,
             parent_pid: p.parent_pid,
             name: p.name.clone(),
-            cpu_percent: CPU_NOT_MEASURED,
-            memory_bytes: MEMORY_NOT_MEASURED,
+            memory_bytes: working_set_bytes,
             thread_count: p.thread_count,
-            started_at,
             uptime_seconds: uptime_seconds(created_at_millis, captured_at_millis),
+            started_at,
             // Not a placeholder. Windows has no process-level sleep state —
             // waiting is a property of threads, not of processes — and a
             // process that appeared in the snapshot is by definition running.
@@ -123,29 +132,42 @@ mod tests {
     use super::*;
 
     const CAPTURED: i64 = 1_787_907_600_000; // 2026-08-28T09:00:00.000Z
+    const SECOND_100NS: u64 = 10_000_000;
 
-    fn raw(pid: u32, created_at: CreationTime) -> RawProcess {
+    fn raw(pid: u32, probe: ProcessProbe) -> RawProcess {
         RawProcess {
             pid,
             parent_pid: 4,
             name: "node.exe".into(),
             thread_count: 18,
-            created_at,
+            probe,
         }
+    }
+
+    fn read(created_at_millis: i64, cpu_time_100ns: u64, working_set_bytes: u64) -> ProcessProbe {
+        ProcessProbe::Read {
+            created_at_millis,
+            cpu_time_100ns,
+            working_set_bytes,
+        }
+    }
+
+    fn tracker() -> CpuTracker {
+        CpuTracker::new(4)
     }
 
     #[test]
     fn every_enumerated_process_is_accounted_for() {
         // The invariant that makes the counts trustworthy: nothing vanishes.
         let input = vec![
-            raw(100, CreationTime::Known(CAPTURED - 1000)),
-            raw(200, CreationTime::AccessDenied),
-            raw(300, CreationTime::Gone),
-            raw(400, CreationTime::Known(CAPTURED - 2000)),
-            raw(500, CreationTime::AccessDenied),
+            raw(100, read(CAPTURED - 1000, 0, 1024)),
+            raw(200, ProcessProbe::AccessDenied),
+            raw(300, ProcessProbe::Gone),
+            raw(400, read(CAPTURED - 2000, 0, 2048)),
+            raw(500, ProcessProbe::AccessDenied),
         ];
 
-        let m = map_processes(&input, CAPTURED);
+        let m = map_processes(&input, CAPTURED, &mut tracker());
 
         assert_eq!(m.rows.len(), 2);
         assert_eq!(m.access_denied, 2);
@@ -160,7 +182,7 @@ mod tests {
     fn identity_pairs_the_pid_with_the_rendered_start_time() {
         // The `id` must be derivable from the row's own fields, or the frontend
         // and backend can disagree about which process a row refers to.
-        let m = map_processes(&[raw(8420, CreationTime::Known(CAPTURED))], CAPTURED);
+        let m = map_processes(&[raw(8420, read(CAPTURED, 0, 0))], CAPTURED, &mut tracker());
         let row = &m.rows[0];
 
         assert_eq!(row.started_at, "2026-08-28T09:00:00.000Z");
@@ -169,23 +191,96 @@ mod tests {
     }
 
     #[test]
-    fn rows_without_a_readable_start_time_are_never_emitted() {
+    fn identities_within_one_snapshot_are_unique() {
+        // Two live processes cannot share a PID, so two rows cannot share an
+        // identity. A duplicate would make the UI's React keys collide.
+        let input: Vec<_> = (1..40u32)
+            .map(|pid| raw(pid, read(CAPTURED - (pid as i64) * 10, 0, 0)))
+            .collect();
+        let m = map_processes(&input, CAPTURED, &mut tracker());
+
+        let mut seen = std::collections::HashSet::new();
+        for row in &m.rows {
+            assert!(seen.insert(row.id.clone()), "duplicate identity {}", row.id);
+        }
+        assert_eq!(seen.len(), input.len());
+    }
+
+    #[test]
+    fn rows_without_a_readable_probe_are_never_emitted() {
         // Not "are emitted with a guess". The absence is the point.
         let m = map_processes(
             &[
-                raw(4, CreationTime::AccessDenied),
-                raw(88, CreationTime::Gone),
+                raw(4, ProcessProbe::AccessDenied),
+                raw(88, ProcessProbe::Gone),
             ],
             CAPTURED,
+            &mut tracker(),
         );
         assert!(m.rows.is_empty());
     }
 
     #[test]
+    fn memory_is_carried_through_as_the_working_set_reported() {
+        let m = map_processes(
+            &[raw(1, read(CAPTURED - 1000, 0, 148_897_792))],
+            CAPTURED,
+            &mut tracker(),
+        );
+        assert_eq!(m.rows[0].memory_bytes, 148_897_792);
+    }
+
+    #[test]
+    fn cpu_is_a_rate_across_two_scans_not_a_reading_from_one() {
+        let mut cpu = CpuTracker::new(1);
+        let started = CAPTURED - 60_000;
+
+        // First scan establishes the baseline.
+        let first = map_processes(&[raw(1, read(started, 0, 0))], CAPTURED, &mut cpu);
+        assert_eq!(first.rows[0].cpu_percent, 0.0, "no CPU burned since start");
+
+        // Half a core-second of work in the next wall second, on one core.
+        let second = map_processes(
+            &[raw(1, read(started, SECOND_100NS / 2, 0))],
+            CAPTURED + 1000,
+            &mut cpu,
+        );
+        assert_eq!(second.rows[0].cpu_percent, 50.0);
+    }
+
+    #[test]
+    fn a_restarted_pid_is_scored_as_a_new_process() {
+        // Same PID, later creation time: a different identity, so the old
+        // process's lifetime CPU total must not become the new one's delta.
+        let mut cpu = CpuTracker::new(1);
+        let first_start = CAPTURED - 600_000;
+        map_processes(
+            &[raw(8420, read(first_start, 600 * SECOND_100NS, 0))],
+            CAPTURED,
+            &mut cpu,
+        );
+
+        let restarted_at = CAPTURED + 500;
+        let m = map_processes(
+            &[raw(8420, read(restarted_at, SECOND_100NS / 4, 0))],
+            CAPTURED + 1500,
+            &mut cpu,
+        );
+
+        // 0.25 core-s over the 1 s it has existed, not over ten minutes.
+        assert_eq!(m.rows[0].cpu_percent, 25.0);
+        assert_ne!(
+            m.rows[0].id,
+            make_process_id(8420, &time::to_iso8601(first_start))
+        );
+    }
+
+    #[test]
     fn uptime_is_measured_against_the_capture_instant() {
         let m = map_processes(
-            &[raw(1, CreationTime::Known(CAPTURED - 4_342_000))],
+            &[raw(1, read(CAPTURED - 4_342_000, 0, 0))],
             CAPTURED,
+            &mut tracker(),
         );
         assert_eq!(m.rows[0].uptime_seconds, 4342.0);
     }
@@ -193,7 +288,11 @@ mod tests {
     #[test]
     fn uptime_never_goes_negative() {
         // A process created mid-scan is newer than the capture instant.
-        let m = map_processes(&[raw(1, CreationTime::Known(CAPTURED + 500))], CAPTURED);
+        let m = map_processes(
+            &[raw(1, read(CAPTURED + 500, 0, 0))],
+            CAPTURED,
+            &mut tracker(),
+        );
         assert_eq!(m.rows[0].uptime_seconds, 0.0);
     }
 
@@ -203,22 +302,23 @@ mod tests {
         // the scan cost between them.
         let m = map_processes(
             &[
-                raw(1, CreationTime::Known(CAPTURED - 60_000)),
-                raw(2, CreationTime::Known(CAPTURED - 60_000)),
+                raw(1, read(CAPTURED - 60_000, 0, 0)),
+                raw(2, read(CAPTURED - 60_000, 0, 0)),
             ],
             CAPTURED,
+            &mut tracker(),
         );
         assert_eq!(m.rows[0].uptime_seconds, m.rows[1].uptime_seconds);
     }
 
     #[test]
     fn platform_facts_are_carried_through_unchanged() {
-        let mut p = raw(8420, CreationTime::Known(CAPTURED));
+        let mut p = raw(8420, read(CAPTURED, 0, 0));
         p.parent_pid = 6104;
         p.name = "pwsh.exe".into();
         p.thread_count = 7;
 
-        let m = map_processes(&[p], CAPTURED);
+        let m = map_processes(&[p], CAPTURED, &mut tracker());
         let row = &m.rows[0];
 
         assert_eq!(row.pid, 8420);
@@ -229,15 +329,29 @@ mod tests {
 
     #[test]
     fn no_row_claims_to_be_a_service_while_service_joining_is_unimplemented() {
-        let m = map_processes(&[raw(1, CreationTime::Known(CAPTURED))], CAPTURED);
+        let m = map_processes(&[raw(1, read(CAPTURED, 0, 0))], CAPTURED, &mut tracker());
         assert!(!m.rows[0].is_service);
     }
 
     #[test]
     fn an_empty_scan_maps_to_an_empty_result() {
-        let m = map_processes(&[], CAPTURED);
+        let m = map_processes(&[], CAPTURED, &mut tracker());
         assert!(m.rows.is_empty());
         assert_eq!(m.access_denied, 0);
         assert_eq!(m.exited_during_scan, 0);
+    }
+
+    #[test]
+    fn the_cpu_tracker_only_remembers_processes_that_are_still_there() {
+        let mut cpu = tracker();
+        let both = vec![
+            raw(1, read(CAPTURED - 1000, 0, 0)),
+            raw(2, read(CAPTURED - 1000, 0, 0)),
+        ];
+        map_processes(&both, CAPTURED, &mut cpu);
+        assert_eq!(cpu.tracked(), 2);
+
+        map_processes(&both[..1], CAPTURED + 1000, &mut cpu);
+        assert_eq!(cpu.tracked(), 1, "an exited process must be retired");
     }
 }

@@ -5,4 +5,5 @@
 //! contract defines — which is exactly the code worth unit-testing, and exactly
 //! the code that must never grow a `use windows::...`.
 
+pub mod cpu;
 pub mod process;

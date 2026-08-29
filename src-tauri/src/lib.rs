@@ -1,25 +1,40 @@
+//! LocalDocks core.
+//!
+//! Wiring only. The layers live beside this file and are described in
+//! docs/ARCHITECTURE.md:
+//!
+//! ```text
+//! commands/   thin IPC handlers
+//! sampler     cadence, state, orchestration
+//! logic/      pure, syscall-free, unit-tested
+//! platform/   every `use windows::...`, behind #[cfg(windows)]
+//! models      serde types shared with TypeScript
+//! errors      the failure taxonomy
+//! ```
+
+mod commands;
 mod errors;
 mod logic;
 mod models;
 mod platform;
+mod sampler;
 mod time;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
-use errors::SystemError;
-use models::Snapshot;
+use tauri::{Emitter, Manager};
 
-/// Tick counter for `Snapshot.sequence`.
+use sampler::{Sampler, SamplerEvent};
+
+/// Cadence the sampler starts at, before the frontend states a preference.
 ///
-/// The contract calls this a monotonic tick counter, so it is one — returning a
-/// hardcoded 0 would misreport a documented field. Ownership moves to the
-/// sampler when that lands (milestone 3); this is the smallest honest
-/// implementation until then.
-static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+/// Matches `DEFAULT_INTERVAL_MS` in `src/lib/ipc.ts`, so the first few ticks
+/// before `set_sample_interval` arrives run at the rate the UI expects.
+const DEFAULT_INTERVAL_MS: u64 = 1000;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -28,77 +43,47 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // The sampler is managed state so commands can reach it, and is
+            // started here rather than lazily on first subscribe: the first
+            // scan should already be done by the time the webview asks.
+            app.manage(Sampler::new(
+                sampler::logical_cores(),
+                Duration::from_millis(DEFAULT_INTERVAL_MS),
+            ));
+
+            let emitter = app.handle().clone();
+            app.state::<Sampler>().start(move |event| match event {
+                SamplerEvent::Update(snapshot) => {
+                    if let Err(e) = emitter.emit("services:update", snapshot) {
+                        log::error!("could not emit services:update: {e}");
+                    }
+                }
+                // The contract types this payload as a string
+                // (docs/ARCHITECTURE.md, and `listen<string>` in ipc.ts), so
+                // the error is rendered rather than sent as a struct.
+                SamplerEvent::Failure(message) => {
+                    if let Err(e) = emitter.emit("services:error", message) {
+                        log::error!("could not emit services:error: {e}");
+                    }
+                }
+            });
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![set_sample_interval, get_snapshot])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
+        .invoke_handler(tauri::generate_handler![
+            commands::get_snapshot,
+            commands::set_sample_interval
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
 
-/// Tell the backend which cadence to sample at.
-///
-/// The frontend chooses the interval; the backend owns the loop. Nothing to own
-/// yet — the sampler is milestone 3 — so this records the request and returns.
-#[tauri::command]
-fn set_sample_interval(interval_ms: u64) {
-    log::info!("sample interval requested: {interval_ms} ms (sampler not implemented yet)");
-}
-
-/// Return the current snapshot.
-///
-/// Enumerates real processes. `services` and `ports` stay empty, and
-/// `conflicts` stays `None`, because port discovery and service joining are
-/// later milestones and an empty list is the truthful representation of work
-/// that has not been done.
-///
-/// Returns `Result` now that there is a failure path: a Rust `Err` arrives in
-/// the frontend as a rejected promise, which `describeError` in
-/// `src/lib/ipc.ts` already handles. No frontend change is required.
-#[tauri::command]
-fn get_snapshot() -> Result<Snapshot, SystemError> {
-    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-
-    // Read the clock once. Every `uptimeSeconds` in this snapshot is measured
-    // against this instant, and `capturedAt` reports the same one, so the two
-    // cannot disagree by however long the scan took.
-    let captured_at_millis = time::now_unix_millis();
-
-    let raw = platform::windows::process::enumerate().inspect_err(|e| {
-        log::error!("process enumeration failed: {e}");
-    })?;
-
-    let mapping = logic::process::map_processes(&raw, captured_at_millis);
-
-    // Excluded processes are logged every tick rather than counted silently.
-    // The contract has no field for "seen but unreadable", so the log is the
-    // only place this is currently visible — see docs/BACKEND.md.
-    if mapping.access_denied > 0 || mapping.exited_during_scan > 0 {
-        log::info!(
-            "{} of {} processes omitted: {} access denied, {} exited during the scan",
-            mapping.access_denied + mapping.exited_during_scan,
-            raw.len(),
-            mapping.access_denied,
-            mapping.exited_during_scan
-        );
-    }
-
-    let snapshot = Snapshot {
-        sequence,
-        captured_at: time::to_iso8601(captured_at_millis),
-        services: Vec::new(),
-        processes: mapping.rows,
-        ports: Vec::new(),
-        conflicts: None,
-    };
-
-    log::info!(
-        "get_snapshot -> seq {} at {} ({} services, {} processes, {} ports)",
-        snapshot.sequence,
-        snapshot.captured_at,
-        snapshot.services.len(),
-        snapshot.processes.len(),
-        snapshot.ports.len()
-    );
-
-    Ok(snapshot)
+    // `build` + `run(callback)` rather than `run(context)` purely so there is
+    // somewhere to stop the sampler. Without this the process would exit with
+    // the sampling thread still mid-scan.
+    app.run(|handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            handle.state::<Sampler>().stop();
+        }
+    });
 }
