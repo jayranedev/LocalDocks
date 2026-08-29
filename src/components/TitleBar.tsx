@@ -1,13 +1,17 @@
+import type { AppMode } from '../types';
 import { Logo } from './Icon';
 import { Chip, IconButton, Kbd } from './ui';
 import { Icon } from './Icon';
+import { ModeSwitch } from './ModeSwitch';
 
 interface TitleBarProps {
   onOpenPalette: () => void;
   onOpenSettings: () => void;
+  mode: AppMode;
+  onModeChange: (mode: AppMode) => void;
 }
 
-export function TitleBar({ onOpenPalette, onOpenSettings }: TitleBarProps) {
+export function TitleBar({ onOpenPalette, onOpenSettings, mode, onModeChange }: TitleBarProps) {
   return (
     <header
       className="flex h-[46px] flex-none items-center gap-3 border-b border-border bg-surface-raised px-3.5"
@@ -22,6 +26,11 @@ export function TitleBar({ onOpenPalette, onOpenSettings }: TitleBarProps) {
       </div>
 
       <div className="flex-1" />
+
+      {/* The mode switch is application chrome, not a screen control: it
+          changes every screen at once, so it lives beside the app's identity
+          rather than inside any one view. */}
+      <ModeSwitch mode={mode} onChange={onModeChange} />
 
       <button
         type="button"

@@ -1,14 +1,18 @@
 import type { Service, Snapshot } from '../types';
 import { formatBytes, formatCpu, isDualStack, primaryPort } from '../lib/format';
+import type { SnapshotView } from '../lib/view';
+import { MODE_HINTS, MODE_LABELS } from '../lib/view';
 import { Icon } from '../components/Icon';
-import { PageHeader, PortBadge, SectionLabel, StatTile, StatusDot } from '../components/ui';
+import { Chip, PageHeader, PortBadge, SectionLabel, StatTile, StatusDot } from '../components/ui';
 
 interface Props {
   snapshot: Snapshot;
+  view: SnapshotView;
+  intervalMs: number;
   onSelect: (id: string) => void;
 }
 
-export function Overview({ snapshot, onSelect }: Props) {
+export function Overview({ snapshot, view, intervalMs, onSelect }: Props) {
   const { services, ports, conflicts } = snapshot;
 
   const totalMemory = services.reduce((sum, s) => sum + s.memoryBytes, 0);
@@ -19,6 +23,26 @@ export function Overview({ snapshot, onSelect }: Props) {
   return (
     <div className="ld-fade-in overflow-auto px-6 py-5">
       <PageHeader title="Overview" subtitle="Everything you own that is listening on this machine." />
+
+      {/* What is being shown, and on whose authority. Every number below is
+          the current mode's view; the mode and the sampler cadence say where
+          those numbers came from. */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[11.5px] text-muted">
+        <Chip tone={view.mode === 'developer' ? 'accent' : 'neutral'}>
+          {MODE_LABELS[view.mode]}
+        </Chip>
+        <span>{MODE_HINTS[view.mode]}</span>
+        <span>·</span>
+        <span className="font-mono">sampler {intervalMs} ms</span>
+        <span>·</span>
+        <span className="tabular-nums">
+          {snapshot.processes.length} of {view.total.processes} processes
+        </span>
+        <span>·</span>
+        <span className="tabular-nums">
+          {snapshot.ports.length} of {view.total.ports} sockets
+        </span>
+      </div>
 
       <div className="mt-[18px] mb-[22px] grid grid-cols-4 gap-3">
         <StatTile

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ProcessId, ScreenId, Theme } from './types';
+import type { AppMode, ProcessId, ScreenId, Theme } from './types';
 import { isInteractive } from './config/flags';
 import { buildDetailTarget } from './lib/detail';
 import { secondsSince } from './lib/format';
 import { loadSettings, saveSettings } from './lib/settings';
+import { viewSnapshot } from './lib/view';
 import { useSnapshot, useTheme, useTicker } from './hooks/useSnapshot';
 
 import { TitleBar } from './components/TitleBar';
@@ -55,6 +56,14 @@ export default function App() {
     });
   }, []);
 
+  const setMode = useCallback((mode: AppMode) => {
+    setSettings((s) => {
+      const next = { ...s, mode };
+      saveSettings(next);
+      return next;
+    });
+  }, []);
+
   /* A failed scan keeps the last good snapshot on screen behind a warning,
      rather than blanking a working UI over one bad tick. */
   const snapshot =
@@ -65,8 +74,19 @@ export default function App() {
         : null;
 
   const scanError = state.kind === 'error' ? { message: state.message, detail: state.detail } : null;
-  const services = useMemo(() => snapshot?.services ?? [], [snapshot]);
 
+  /* Developer/System is applied exactly once, here, and every screen below
+     receives the result. No screen filters by mode itself — see lib/view.ts. */
+  const view = useMemo(
+    () => (snapshot ? viewSnapshot(snapshot, settings.mode) : null),
+    [snapshot, settings.mode],
+  );
+  const visible = view?.snapshot ?? null;
+  const services = useMemo(() => visible?.services ?? [], [visible]);
+
+  /* Detail is built from the complete snapshot, not the narrowed one: a panel
+     opened in Developer mode must not empty itself when the process it
+     describes is one the mode happens to hide. */
   const target = useMemo(
     () =>
       snapshot && selection
@@ -104,10 +124,12 @@ export default function App() {
     [],
   );
 
+  /* Nav badges count what the current mode shows, so they always agree with
+     the table the user lands on. */
   const counts = {
     services: services.length,
-    processes: snapshot?.processes.length,
-    ports: snapshot?.ports.length,
+    processes: visible?.processes.length,
+    ports: visible?.ports.length,
   };
 
   const selectedId = selection?.processId ?? null;
@@ -115,7 +137,12 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-background text-primary">
-      <TitleBar onOpenPalette={() => setPaletteOpen(true)} onOpenSettings={() => navigate('settings')} />
+      <TitleBar
+        onOpenPalette={() => setPaletteOpen(true)}
+        onOpenSettings={() => navigate('settings')}
+        mode={settings.mode}
+        onModeChange={setMode}
+      />
 
       <div className="flex min-h-0 flex-1">
         <Sidebar screen={screen} onNavigate={navigate} counts={counts} />
@@ -126,27 +153,32 @@ export default function App() {
             <ErrorState message={scanError.message} detail={scanError.detail} />
           )}
 
-          {snapshot && (
+          {visible && view && (
             <>
               {screen === 'overview' &&
                 (state.kind === 'empty' ? (
                   <EmptyState />
                 ) : (
-                  <Overview snapshot={snapshot} onSelect={selectProcess} />
+                  <Overview
+                    snapshot={visible}
+                    view={view}
+                    intervalMs={settings.intervalMs}
+                    onSelect={selectProcess}
+                  />
                 ))}
 
               {screen === 'services' &&
                 (state.kind === 'empty' ? (
                   <EmptyState />
                 ) : (
-                  <Services snapshot={snapshot} selectedId={selectedId} onSelect={selectProcess} />
+                  <Services snapshot={visible} selectedId={selectedId} onSelect={selectProcess} />
                 ))}
 
               {screen === 'processes' && (
-                <Processes snapshot={snapshot} selectedId={selectedId} onSelect={selectProcess} />
+                <Processes snapshot={visible} selectedId={selectedId} onSelect={selectProcess} />
               )}
               {screen === 'ports' && (
-                <Ports snapshot={snapshot} selectedId={selectedId} onSelect={selectProcess} />
+                <Ports snapshot={visible} selectedId={selectedId} onSelect={selectProcess} />
               )}
               {screen === 'projects' && <Projects />}
               {screen === 'logs' && <Logs />}
@@ -195,6 +227,8 @@ export default function App() {
       </div>
 
       <StatusBar
+        mode={settings.mode}
+        hidden={view?.hidden ?? { processes: 0, ports: 0 }}
         serviceCount={services.length}
         conflicts={snapshot?.conflicts ?? null}
         age={snapshot ? secondsSince(snapshot.capturedAt) : 0}
