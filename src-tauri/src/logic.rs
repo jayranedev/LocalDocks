@@ -6,6 +6,8 @@
 //! the code that must never grow a `use windows::...`.
 
 pub mod cpu;
+pub mod identity;
 pub mod ports;
 pub mod process;
 pub mod service;
+pub mod url;
