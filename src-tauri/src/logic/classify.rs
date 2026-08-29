@@ -344,10 +344,13 @@ mod tests {
 
     #[test]
     fn a_runtime_with_a_tool_signature_is_developer_and_names_the_tool() {
-        // The real command line of the Vite dev server running on the
-        // development machine this registry was built against.
-        let line =
-            r#""node"   "C:\Desktop\BRO.UNIVERSITY\node_modules\.bin\\..\vite\bin\vite.js" "#;
+        // Structurally the command line of a real Vite dev server: the
+        // doubled spaces, the quoting, and the `\\..\` segment npm leaves in a
+        // `.bin` shim path are all reproduced, because each is a way the
+        // tokenizer could go wrong. The project directory is generic on
+        // purpose — a test fixture is not the place for anyone's private
+        // project name.
+        let line = r#""node"   "C:\projects\storefront\node_modules\.bin\\..\vite\bin\vite.js" "#;
         let c = classify("node.exe", Some(line));
         assert_eq!(c.relevance, Relevance::Developer);
         assert_eq!(c.reason, "Node.js launched with the Vite signature.");
