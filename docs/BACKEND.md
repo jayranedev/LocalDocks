@@ -50,17 +50,33 @@ project. Designing the join there is what stops V3 from requiring a rewrite.
 
 Conceptual. **Do not create these directories in advance.**
 
+The shape it actually took, as of the dashboard milestone:
+
 ```
 src-tauri/src/
 ├── main.rs
-├── lib.rs
-├── commands/     IPC surface only — thin, no logic
-├── platform/
-│   └── windows/  every `use windows::…` lives here, behind #[cfg]
-├── logic/        pure, syscall-free, unit-tested
-├── models/       serde types shared with TypeScript
-└── errors/
+├── lib.rs                     wiring only: builder, state, handlers, shutdown
+├── commands.rs                the five IPC handlers — thin, no logic
+├── sampler.rs                 cadence, state, orchestration
+├── logic/                     pure, syscall-free, unit-tested
+│   ├── cpu.rs                 delta maths
+│   ├── identity.rs            parsing `{pid}-{startedAt}`
+│   ├── ports.rs               address presentation, PID attribution
+│   ├── process.rs             raw processes -> ProcessRow
+│   ├── service.rs             the Process + Endpoint[] join
+│   └── url.rs                 the open_external allowlist
+├── platform/windows/          every `use windows::…`, behind #[cfg]
+│   ├── control.rs             detail, terminate, ShellExecuteW
+│   ├── ports.rs               the four extended-table calls
+│   └── process.rs             Toolhelp + OpenProcess
+├── models.rs                  serde types shared with TypeScript
+└── errors.rs
 ```
+
+`models` and `errors` stayed single files rather than becoming directories,
+because nothing needed splitting. `commands/` likewise: the five handlers are
+forty lines together. The rule that modules appear when something fills them
+applies to this document too.
 
 Two rules that matter more than the layout:
 
@@ -78,14 +94,14 @@ Two rules that matter more than the layout:
 
 ### V1 — process discovery
 
-| Need | API | Notes |
-|---|---|---|
-| Enumerate | `CreateToolhelp32Snapshot` + `Process32First/Next` | Simplest. `EnumProcesses` is an alternative; `NtQuerySystemInformation` is faster but undocumented. |
-| Open | `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` | Least privilege that works. Fails with `ERROR_ACCESS_DENIED` on other accounts — that is a `denied` field, not an error. |
-| Times | `GetProcessTimes` | Returns creation, exit, kernel, user as FILETIME. Source of **both** uptime and the identity discriminator. |
-| Memory | `GetProcessMemoryInfo` | `WorkingSetSize` is what Task Manager shows. |
-| Image path | `QueryFullProcessImageNameW` | Cheaper than the tier-2 fields; still needs an open handle. |
-| Threads | from the Toolhelp snapshot | Free — already enumerated. |
+| Need | API | Status | Notes |
+|---|---|---|---|
+| Enumerate | `CreateToolhelp32Snapshot` + `Process32First/Next` | **IMPLEMENTED** | Simplest. `EnumProcesses` is an alternative; `NtQuerySystemInformation` is faster but undocumented. |
+| Open | `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` | **IMPLEMENTED** | Least privilege that works. Fails with `ERROR_ACCESS_DENIED` on other accounts — that is a `denied` field, not an error. Measured: 215 of 370 processes openable unelevated, and every one of them owned by the current user, which is why this doubles as the ownership predicate. |
+| Times | `GetProcessTimes` | **IMPLEMENTED** | Creation, exit, kernel, user as FILETIME. Source of **both** uptime and the identity discriminator, and of the cumulative CPU time the sampler differences. |
+| Memory | `GetProcessMemoryInfo` | **IMPLEMENTED** | `WorkingSetSize` is what Task Manager shows. |
+| Image path | `QueryFullProcessImageNameW` | **IMPLEMENTED** | Tier 2, on panel open. |
+| Threads | from the Toolhelp snapshot | **IMPLEMENTED** | Free — already enumerated. |
 
 **CPU percentage is computed, not read:**
 
@@ -128,7 +144,32 @@ genuinely unpleasant:
 | `NtQueryInformationProcess(ProcessCommandLineInformation)` | Win10 1511+, much saner, still semi-documented |
 
 **Recommendation: none of these in the scan loop, ever.** Fetch on detail-panel
-open. Decide between them when V2 forces the issue, not before.
+open.
+
+**Decided.** Command line uses `ProcessCommandLineInformation` (class 60) —
+**IMPLEMENTED**. It needs no `PROCESS_VM_READ`, no `ReadProcessMemory` and is
+not bitness-fragile, which is what ruled out the PEB walk. The size is queried
+first rather than guessed, so a long command line is never silently truncated.
+
+**Working directory is DEFERRED.** There is no route to it but the PEB walk this
+table already rates as fragile, and it needs a wider handle than anything else
+in the app. It renders as `FieldState::Unavailable` — an honest absence rather
+than a blank that reads like an answer. Revisit when V2 project detection
+forces the issue, exactly as this section originally advised.
+
+### V1 — actions
+
+| Need | API | Status |
+|---|---|---|
+| Verify before acting | `OpenProcess` → `GetProcessTimes` → compare creation time | **IMPLEMENTED** |
+| Terminate | `TerminateProcess` with `PROCESS_TERMINATE` | **IMPLEMENTED** |
+| Open a URL | `ShellExecuteW`, after an `http`/`https` allowlist check | **IMPLEMENTED** |
+
+`open_external` adds no dependency: the URL is validated in `logic::url` — a
+pure function with its own tests — and handed to the OS's own "open this the
+way the user would" verb. No shell is invoked and no argument string is built.
+An allowlist rather than a blocklist, because any installed application can
+register a new scheme at any time.
 
 ---
 
@@ -207,12 +248,12 @@ becomes justified when a second platform is real — not before.
 ## Implementation order
 
 ```
-1. feature/project-setup      Tauri foundation, IPC round-trip
-2. feature/process-discovery  Win32 enumeration, plain command
-3. feature/sampler            Managed state, CPU deltas, events
-4. feature/port-discovery     GetExtendedTcpTable, v4 + v6
-5. feature/service-model      Join by PID, the service predicate
-6. feature/dashboard          Wire the existing UI to real data
+1. feature/project-setup      Tauri foundation, IPC round-trip          DONE
+2. feature/process-discovery  Win32 enumeration, plain command          DONE
+3. feature/sampler            Managed state, CPU deltas, events         DONE
+4. feature/port-discovery     GetExtendedTcpTable, v4 + v6, and UDP     DONE
+5. feature/service-model      Join by PID, the service predicate        DONE
+6. feature/dashboard          Wire the existing UI to real data         DONE
 7. feature/process-actions    Verified terminate, open, copy
 ```
 

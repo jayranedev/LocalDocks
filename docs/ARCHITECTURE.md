@@ -105,6 +105,34 @@ Command-line retrieval on Windows is expensive and awkward (BACKEND.md § Tier 2
 It must never sit inside the scan loop. This split is also what makes V2 project
 detection affordable — it reuses tier-2 data rather than adding scan cost.
 
+### 4b · Presentation mode is not collection
+
+**IMPLEMENTED.** LocalDocks has one global switch: Developer or System.
+
+The distinction is strictly about what is *shown*. The sampler always collects
+everything it can see — every process the user owns, every socket it can
+attribute — and the mode narrows that for presentation in exactly one function
+(`src/lib/view.ts`), which all four screens consume.
+
+Developer relevance is derived from relationships the backend already observed:
+a process is relevant if it is a Service, if its parent is a Service, or if it
+is the parent of one. One hop in each direction — walking the whole tree reaches
+`explorer.exe` and from there everything.
+
+Two things it is deliberately not:
+
+- **Not an executable allowlist.** Same reasoning as decision 1. A rule that
+  needs updating for each new runtime is wrong the day someone tries Bun.
+- **Not localhost-only.** Addresses are never consulted, so `0.0.0.0:8000` is
+  exactly as eligible as `127.0.0.1:8000`. Filtering by address would hide the
+  bindings a developer most needs to notice.
+
+Because mode is presentation, switching costs nothing, changes no syscall, and
+can never make the app miss something. System mode is the raw view and hides
+nothing the backend can observe.
+
+---
+
 ### 5 · Endpoints are plural, and identity is not the port
 
 A dev server routinely binds `127.0.0.1:5173`, `[::1]:5173` and sometimes
@@ -165,6 +193,54 @@ The V1 core does not get replaced by V2. Every V2 subsystem hangs off the
 sampler and the join that V1 establishes. That is the point of getting V1's
 model right before writing V2's features.
 
+### Implementation status
+
+The decisions above are all **IMPLEMENTED** as described, with one exception
+noted in decision 4: the tier-2 *working directory* field is **DEFERRED**, and
+renders as `unavailable` rather than being guessed. See docs/BACKEND.md.
+
+---
+
+### Future architecture — documented, not built
+
+Two directions are recorded here so that today's decisions do not foreclose
+them. Neither is implemented, and neither may be started before V2 ships.
+
+**Telemetry overlay — PLANNED (V2).** An always-on-top compact readout.
+
+```
+Snapshot
+├── Main UI
+├── Overlay
+└── Notifications
+```
+
+The constraint that matters: the overlay is a second *consumer* of the existing
+sampler state, never a second sampler. It subscribes to the same
+`services:update` and holds no timer of its own. An overlay that polls
+independently would double the scan cost and could disagree with the main
+window about what is running — two clocks, two truths.
+
+**Local intelligence — PLANNED (V3).** A small local model over the structured
+data LocalDocks already has:
+
+```
+small local model  +  structured context  +  controlled tools  +  selective retrieval
+```
+
+Four constraints, fixed now:
+
+- **Local only.** No cloud call, no account, no telemetry. If it cannot run on
+  the machine, it does not ship.
+- **Structured context, not scraping.** It reads Snapshots and Events — the
+  same typed data the UI reads — rather than parsing screens.
+- **Controlled tools.** A named, audited set of read-only operations. Never a
+  shell, never arbitrary command execution, never elevation.
+- **It explains; it does not decide.** Conflict detection, project detection and
+  diagnostics stay rule-based and deterministic. The model is a reader.
+
+---
+
 ### Growth rules
 
 - **Modules appear when they are needed**, not because the diagram has a box.
@@ -186,16 +262,23 @@ model right before writing V2's features.
 
 ```
 commands
-  get_snapshot()                       -> Snapshot
-  get_process_detail(processId)        -> ProcessDetail
-  terminate_process(pid, startedAt)    -> TerminateResult
-  set_sample_interval(intervalMs)      -> ()
-  open_external(url)                   -> ()
+  get_snapshot()                       -> Snapshot          IMPLEMENTED
+  get_process_detail(processId)        -> ProcessDetail     IMPLEMENTED
+  terminate_process(pid, startedAt)    -> TerminateResult   IMPLEMENTED
+  set_sample_interval(intervalMs)      -> ()                IMPLEMENTED
+  open_external(url)                   -> ()                IMPLEMENTED
 
 events
-  services:update  -> Snapshot
-  services:error   -> string
+  services:update  -> Snapshot                              IMPLEMENTED
+  services:error   -> string                                IMPLEMENTED
 ```
+
+The V1 IPC surface is complete. `get_snapshot` is a cached state read and never
+triggers a scan; `get_process_detail` is the only tier-2 path and is never
+called from the sampler; `terminate_process` and `get_process_detail` both
+re-verify `pid + startedAt` against a fresh creation-time reading before they
+touch anything; `open_external` validates against an `http`/`https` allowlist
+before the OS sees the string.
 
 `TerminateResult` is a discriminated union — `terminated | stale | denied |
 failed` — because "the PID was recycled" is a normal outcome the UI must render
