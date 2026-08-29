@@ -30,15 +30,15 @@ export function ComingSoon({
       </div>
 
       <div
-        className="ld-pop-in absolute top-1/2 left-1/2 w-[452px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-bdhi bg-elev px-[21px] py-[19px]"
+        className="ld-pop-in absolute top-1/2 left-1/2 w-[452px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border-strong bg-surface-raised px-[21px] py-[19px]"
         style={{ boxShadow: 'var(--shadow-panel)' }}
       >
-        <Chip tone={status === 'PLANNED' ? 'accent' : 'neutral'}>
+        <Chip tone={status === 'PLANNED' ? 'future' : 'neutral'}>
           {status} · {milestone}
         </Chip>
         <h2 className="mt-[11px] text-[15px] font-medium">{title}</h2>
-        <p className="mt-[7px] text-[12.5px] leading-relaxed text-t2">{children}</p>
-        <p className="mt-3 border-t border-bd pt-[11px] text-[11px] leading-relaxed text-t3">{note}</p>
+        <p className="mt-[7px] text-[12.5px] leading-relaxed text-secondary">{children}</p>
+        <p className="mt-3 border-t border-border pt-[11px] text-[11px] leading-relaxed text-muted">{note}</p>
       </div>
     </div>
   );

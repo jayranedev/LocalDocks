@@ -3,14 +3,23 @@ import { PageHeader, PortBadge, Chip, StatusDot } from '../components/ui';
 
 const DEV_ONLY = 'Hidden in production builds. Visible here because the DEV flag is on.';
 
-const LOG_LINES = [
-  { t: '14:48:09', tag: 'vite', tone: 'ac', msg: 'ready in 412 ms' },
-  { t: '14:48:09', tag: 'vite', tone: 'ac', msg: 'Local:   http://localhost:5173/' },
-  { t: '14:52:31', tag: 'hmr', tone: 'grn', msg: 'update /src/routes/Cart.tsx' },
-  { t: '14:52:31', tag: 'hmr', tone: 'grn', msg: 'page reload src/main.tsx' },
-  { t: '15:01:04', tag: 'warn', tone: 'amb', msg: 'chunk larger than 500 kB after minification' },
-  { t: '15:03:47', tag: 'vite', tone: 'ac', msg: 'optimized dependencies changed, reloading' },
-  { t: '15:03:48', tag: 'err', tone: 'red', msg: 'Failed to resolve import "./legacy/api"' },
+type LogTone = 'accent' | 'success' | 'warning' | 'danger';
+
+const LOG_TONES: Record<LogTone, string> = {
+  accent: 'text-accent',
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-danger',
+};
+
+const LOG_LINES: Array<{ t: string; tag: string; tone: LogTone; msg: string }> = [
+  { t: '14:48:09', tag: 'vite', tone: 'accent', msg: 'ready in 412 ms' },
+  { t: '14:48:09', tag: 'vite', tone: 'accent', msg: 'Local:   http://localhost:5173/' },
+  { t: '14:52:31', tag: 'hmr', tone: 'success', msg: 'update /src/routes/Cart.tsx' },
+  { t: '14:52:31', tag: 'hmr', tone: 'success', msg: 'page reload src/main.tsx' },
+  { t: '15:01:04', tag: 'warn', tone: 'warning', msg: 'chunk larger than 500 kB after minification' },
+  { t: '15:03:47', tag: 'vite', tone: 'accent', msg: 'optimized dependencies changed, reloading' },
+  { t: '15:03:48', tag: 'err', tone: 'danger', msg: 'Failed to resolve import "./legacy/api"' },
 ];
 
 export function Logs() {
@@ -23,12 +32,12 @@ export function Logs() {
       preview={
         <>
           <PageHeader title="Logs" subtitle="Live stdout and stderr for a captured service." />
-          <div className="mt-[18px] rounded-[9px] border border-bd bg-surf px-[15px] py-[13px] font-mono text-[11.5px] leading-[1.85] text-t2">
+          <div className="mt-[18px] rounded-[9px] border border-border bg-surface px-[15px] py-[13px] font-mono text-[11.5px] leading-[1.85] text-secondary">
             {LOG_LINES.map((l, i) => (
               <div key={i}>
-                <span className="text-t3">{l.t}</span>
+                <span className="text-muted">{l.t}</span>
                 {'  '}
-                <span style={{ color: `var(--c-${l.tone})` }}>{l.tag}</span>
+                <span className={LOG_TONES[l.tone]}>{l.tag}</span>
                 {'  '}
                 {l.msg}
               </div>
@@ -59,15 +68,15 @@ export function Docker() {
       preview={
         <>
           <PageHeader title="Docker" subtitle="Containers, their published ports and resource usage." />
-          <div className="mt-[18px] max-w-[760px] overflow-hidden rounded-[9px] border border-bd bg-surf">
+          <div className="mt-[18px] max-w-[760px] overflow-hidden rounded-[9px] border border-border bg-surface">
             {CONTAINERS.map((c) => (
-              <div key={c.name} className="flex h-[46px] items-center gap-[13px] border-b border-bd px-3.5 last:border-b-0">
-                <StatusDot tone={c.up ? 'grn' : 't3'} />
+              <div key={c.name} className="flex h-[46px] items-center gap-[13px] border-b border-border px-3.5 last:border-b-0">
+                <StatusDot tone={c.up ? 'success' : 'muted'} />
                 <span className="w-[170px] text-[12.5px]">{c.name}</span>
-                <span className="w-[150px] font-mono text-[11px] text-t3">{c.image}</span>
+                <span className="w-[150px] font-mono text-[11px] text-muted">{c.image}</span>
                 <PortBadge port={c.port} />
                 <span className="flex-1" />
-                <span className="font-mono text-[11.5px] text-t2">{c.mem}</span>
+                <span className="font-mono text-[11.5px] text-secondary">{c.mem}</span>
               </div>
             ))}
           </div>
@@ -98,13 +107,13 @@ export function Wsl() {
           <PageHeader title="WSL" subtitle="Distributions and the services running inside them." />
           <div className="mt-[18px] flex max-w-[640px] flex-col gap-[11px]">
             {DISTROS.map((d) => (
-              <div key={d.name} className="rounded-[9px] border border-bd bg-surf px-[15px] py-[13px]">
+              <div key={d.name} className="rounded-[9px] border border-border bg-surface px-[15px] py-[13px]">
                 <div className="flex items-center gap-2.5">
-                  <StatusDot tone={d.up ? 'grn' : 't3'} />
+                  <StatusDot tone={d.up ? 'success' : 'muted'} />
                   <span className="text-[13px] font-medium">{d.name}</span>
                   <Chip>{d.version}</Chip>
                   <span className="flex-1" />
-                  <span className="font-mono text-[11px] text-t3">{d.ip}</span>
+                  <span className="font-mono text-[11px] text-muted">{d.ip}</span>
                 </div>
               </div>
             ))}

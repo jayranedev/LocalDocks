@@ -47,15 +47,15 @@ export function Sidebar({ screen, onNavigate, counts }: SidebarProps) {
         onClick={() => onNavigate(entry.id)}
         aria-current={active ? 'page' : undefined}
         className={`mb-px flex h-[31px] w-full items-center gap-2.5 rounded-md px-2.5 text-[12.5px] transition-colors ${
-          active ? 'bg-sel font-medium text-t1' : 'text-t2 hover:bg-sel'
+          active ? 'bg-surface-selected font-medium text-primary' : 'text-secondary hover:bg-surface-selected'
         }`}
       >
         <Icon name={entry.icon} />
         <span className="flex-1 text-left">{entry.label}</span>
         {milestone ? (
-          <Chip>{milestone}</Chip>
+          <Chip tone="future">{milestone}</Chip>
         ) : count !== undefined ? (
-          <span className="font-mono text-[10.5px] text-t3 tabular-nums">{count}</span>
+          <span className="font-mono text-[10.5px] text-muted tabular-nums">{count}</span>
         ) : null}
       </button>
     );
@@ -64,15 +64,15 @@ export function Sidebar({ screen, onNavigate, counts }: SidebarProps) {
   const showLater = IS_DEV && LATER.some((e) => isVisible(e.id));
 
   return (
-    <nav className="flex w-[212px] flex-none flex-col border-r border-bd bg-elev px-2 py-2.5">
+    <nav className="flex w-[212px] flex-none flex-col border-r border-border bg-surface-raised px-2 py-2.5">
       {PRIMARY.map(item)}
       {PREVIEW.map(item)}
 
       {showLater && (
         <>
           <div className="mt-3.5 mb-1.5 flex items-center gap-2 px-2.5">
-            <span className="text-[10px] font-semibold tracking-[0.09em] text-t3">LATER</span>
-            <span className="h-px flex-1 bg-bd" />
+            <span className="text-[10px] font-semibold tracking-[0.09em] text-muted">LATER</span>
+            <span className="h-px flex-1 bg-border" />
             <Chip tone="quiet">DEV</Chip>
           </div>
           {LATER.map(item)}

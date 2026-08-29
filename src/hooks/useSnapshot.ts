@@ -55,20 +55,16 @@ export function useTicker(ms = 100): number {
   return n;
 }
 
-/** Applies the theme choice to the document, following the OS when set to system. */
+/**
+ * Applies the chosen theme to the document.
+ *
+ * One attribute write, no OS listener: the three themes are explicit choices,
+ * so nothing outside the app is allowed to change how it looks. Every colour
+ * downstream resolves from the `[data-theme]` block this selects, which is why
+ * no component needs to know which theme is active.
+ */
 export function useTheme(theme: Theme): void {
   useEffect(() => {
-    const root = document.documentElement;
-
-    if (theme !== 'system') {
-      root.setAttribute('data-theme', theme);
-      return;
-    }
-
-    const media = window.matchMedia('(prefers-color-scheme: light)');
-    const apply = () => root.setAttribute('data-theme', media.matches ? 'light' : 'dark');
-    apply();
-    media.addEventListener('change', apply);
-    return () => media.removeEventListener('change', apply);
+    document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 }

@@ -122,19 +122,19 @@ export function CommandPalette({ services, onClose, onNavigate, onSelectService 
   return (
     <div
       className="ld-fade-in absolute inset-0 flex items-start justify-center pt-24"
-      style={{ background: 'var(--c-scrim)' }}
+      style={{ background: 'var(--scrim)' }}
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
     >
       <div
-        className="ld-pop-in w-[520px] overflow-hidden rounded-xl border border-bdhi bg-elev"
+        className="ld-pop-in w-[520px] overflow-hidden rounded-xl border border-border-strong bg-surface-raised"
         style={{ boxShadow: 'var(--shadow-panel)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2.5 border-b border-bd px-[15px] py-[13px]">
-          <span className="text-t3">
+        <div className="flex items-center gap-2.5 border-b border-border px-[15px] py-[13px]">
+          <span className="text-muted">
             <Icon name="search" />
           </span>
           <input
@@ -142,14 +142,14 @@ export function CommandPalette({ services, onClose, onNavigate, onSelectService 
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Type a command or port number…"
-            className="flex-1 bg-transparent text-[13.5px] text-t1 outline-none placeholder:text-t3"
+            className="flex-1 bg-transparent text-[13.5px] text-primary outline-none placeholder:text-muted"
           />
           <Kbd>Esc</Kbd>
         </div>
 
         <div className="p-1.5">
           {filtered.length === 0 ? (
-            <p className="px-2.5 py-6 text-center text-[12.5px] text-t3">No matching commands</p>
+            <p className="px-2.5 py-6 text-center text-[12.5px] text-muted">No matching commands</p>
           ) : (
             filtered.map((c, i) => (
               <button
@@ -158,14 +158,14 @@ export function CommandPalette({ services, onClose, onNavigate, onSelectService 
                 onMouseEnter={() => setCursor(i)}
                 onClick={c.run}
                 className={`flex h-9 w-full items-center gap-[11px] rounded-[7px] px-2.5 text-left ${
-                  i === cursor ? 'bg-sel' : ''
+                  i === cursor ? 'bg-surface-selected' : ''
                 }`}
               >
-                <span className={i === cursor ? 'text-ac' : 'text-t3'}>
+                <span className={i === cursor ? 'text-accent' : 'text-muted'}>
                   <Icon name="chevron" size={13} />
                 </span>
                 <span className="flex-1 text-[12.5px]">{c.label}</span>
-                <span className="font-mono text-[11px] text-t3">{c.hint}</span>
+                <span className="font-mono text-[11px] text-muted">{c.hint}</span>
               </button>
             ))
           )}

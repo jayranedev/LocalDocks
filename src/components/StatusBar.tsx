@@ -14,16 +14,16 @@ interface StatusBarProps {
 
 export function StatusBar({ serviceCount, conflicts, age, intervalMs, error }: StatusBarProps) {
   return (
-    <footer className="flex h-[30px] flex-none items-center gap-3.5 border-t border-bd bg-elev px-3.5 text-[11.5px] text-t3">
+    <footer className="flex h-[30px] flex-none items-center gap-3.5 border-t border-border bg-surface-raised px-3.5 text-[11.5px] text-muted">
       <span className="flex items-center gap-[7px]">
-        <span className={`size-1.5 rounded-full ${error ? 'bg-red' : 'bg-grn'}`} />
-        <span className="text-t2">
+        <span className={`size-1.5 rounded-full ${error ? 'bg-danger' : 'bg-success'}`} />
+        <span className="text-secondary">
           {serviceCount} {serviceCount === 1 ? 'service' : 'services'}
         </span>
       </span>
 
       <span
-        className={conflicts !== null && conflicts > 0 ? 'text-amb' : undefined}
+        className={conflicts !== null && conflicts > 0 ? 'text-warning' : undefined}
         title={conflicts === null ? 'Conflict detection is not implemented yet' : undefined}
       >
         {conflicts === null ? '— conflicts' : `${conflicts} conflicts`}
@@ -32,7 +32,7 @@ export function StatusBar({ serviceCount, conflicts, age, intervalMs, error }: S
       <div className="flex-1" />
 
       {error ? (
-        <span className="flex items-center gap-[5px] text-red" title={error.detail}>
+        <span className="flex items-center gap-[5px] text-danger" title={error.detail}>
           <Icon name="warn" size={13} />
           <span>scan failing — showing last good snapshot</span>
         </span>
@@ -40,7 +40,7 @@ export function StatusBar({ serviceCount, conflicts, age, intervalMs, error }: S
         <>
           {BACKEND === 'mock' && (
             <>
-              <span className="text-amb">mock backend</span>
+              <span className="text-warning">mock backend</span>
               <span>·</span>
             </>
           )}

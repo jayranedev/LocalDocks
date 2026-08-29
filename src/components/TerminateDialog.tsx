@@ -45,51 +45,48 @@ export function TerminateDialog({ target, onClose, onTerminated }: Props) {
   return (
     <div
       className="ld-fade-in absolute inset-0 flex items-center justify-center"
-      style={{ background: 'var(--c-scrim)' }}
+      style={{ background: 'var(--scrim)' }}
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={`Terminate ${target.title}`}
     >
       <div
-        className="ld-pop-in w-[436px] rounded-xl border border-bdhi bg-elev px-5 py-[19px]"
+        className="ld-pop-in w-[436px] rounded-xl border border-border-strong bg-surface-raised px-5 py-[19px]"
         style={{ boxShadow: 'var(--shadow-panel)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-[13px] flex items-center gap-2.5">
-          <span className="text-red">
+          <span className="text-danger">
             <Icon name="warn" />
           </span>
           <h2 className="text-[14.5px] font-medium">Terminate {target.title}?</h2>
         </div>
 
-        <div className="mb-[13px] rounded-[7px] border border-bd bg-surf px-[11px] py-[9px] font-mono text-[11.5px] leading-relaxed text-t2">
+        <div className="mb-[13px] rounded-[7px] border border-border bg-surface px-[11px] py-[9px] font-mono text-[11.5px] leading-relaxed text-secondary">
           {target.processName} &nbsp;·&nbsp; PID {target.pid}
           <br />
           started {formatClock(target.startedAt)}
         </div>
 
-        <div
-          className="mb-3 flex gap-[9px] rounded-[7px] border border-bd px-3 py-2.5"
-          style={{ background: 'color-mix(in srgb, var(--c-ac) 14%, transparent)' }}
-        >
-          <span className="mt-px text-ac">
+        <div className="mb-3 flex gap-[9px] rounded-[7px] border border-border bg-accent-soft px-3 py-2.5">
+          <span className="mt-px text-accent">
             <Icon name="lock" />
           </span>
-          <p className="text-[11.5px] leading-relaxed text-t2">
+          <p className="text-[11.5px] leading-relaxed text-secondary">
             LocalDocks re-opens the process and checks its creation time matches before terminating.
             If Windows has recycled PID {target.pid}, the action is refused.
           </p>
         </div>
 
-        <p className="mb-4 text-[11.5px] leading-relaxed text-t2">
-          This is a <strong className="font-semibold text-t1">force terminate</strong>. The process
+        <p className="mb-4 text-[11.5px] leading-relaxed text-secondary">
+          This is a <strong className="font-semibold text-primary">force terminate</strong>. The process
           gets no chance to clean up and unsaved work is lost. Windows has no graceful equivalent of
           SIGTERM.
         </p>
 
         {result && result.kind !== 'terminated' && (
-          <div className="mb-3 rounded-[7px] border border-red/40 px-3 py-2.5 text-[11.5px] leading-relaxed text-red">
+          <div className="mb-3 rounded-[7px] border border-danger bg-danger-soft px-3 py-2.5 text-[11.5px] leading-relaxed text-danger">
             {result.kind === 'stale' && result.message}
             {result.kind === 'denied' && 'Access denied. This process is owned by another account.'}
             {result.kind === 'failed' && result.message}
