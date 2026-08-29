@@ -114,6 +114,26 @@ export interface ProcessDetail {
   workingDirectory: FieldState<string>;
 }
 
+/**
+ * Machine-wide load, sampled once per tick.
+ *
+ * Every field is nullable, and null always means "not measured" — never
+ * "measured as zero". The backend refuses to invent a number for a reading
+ * Windows does not expose to an unelevated process, so network throughput,
+ * disk I/O, GPU load and temperature are absent rather than fabricated. The UI
+ * renders null as "—".
+ */
+export interface SystemTelemetry {
+  /** Machine-wide utilisation over the last interval, 0–100. */
+  cpuPercent: number | null;
+  /** Per-logical-processor utilisation, in the order Windows enumerates. */
+  perCorePercent: number[] | null;
+  logicalProcessors: number;
+  memoryTotalBytes: number | null;
+  memoryUsedBytes: number | null;
+  memoryPercent: number | null;
+}
+
 /** Everything one sampler tick produces. */
 export interface Snapshot {
   /** Monotonic tick counter. */
@@ -131,6 +151,8 @@ export interface Snapshot {
    * exists so the day Rust starts sending a number, nothing here changes.
    */
   conflicts: number | null;
+  /** Machine-wide load for this tick. */
+  system: SystemTelemetry;
 }
 
 /** What the UI is currently showing. */

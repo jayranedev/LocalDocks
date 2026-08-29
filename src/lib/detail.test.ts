@@ -13,6 +13,14 @@ function snapshot(): Snapshot {
     sequence: 1,
     capturedAt: STARTED,
     conflicts: null,
+    system: {
+      cpuPercent: null,
+      perCorePercent: null,
+      logicalProcessors: 8,
+      memoryTotalBytes: null,
+      memoryUsedBytes: null,
+      memoryPercent: null,
+    },
     services: [
       {
         id: SVC_ID,

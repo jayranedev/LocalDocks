@@ -40,7 +40,8 @@ use crate::logic::cpu::CpuTracker;
 use crate::logic::ports::map_ports;
 use crate::logic::process::map_processes;
 use crate::logic::service::join_services;
-use crate::models::Snapshot;
+use crate::logic::telemetry::SystemCpuTracker;
+use crate::models::{Snapshot, SystemTelemetry};
 use crate::platform;
 use crate::time;
 
@@ -84,6 +85,8 @@ struct State {
     /// Previous CPU totals, keyed by process identity. The only reason the
     /// sampler is stateful at all.
     cpu: CpuTracker,
+    /// Previous machine-wide and per-core CPU counters, for the same reason.
+    system_cpu: SystemCpuTracker,
     /// Monotonic tick counter for `Snapshot.sequence`.
     sequence: u64,
     /// Current cadence. Read by the wait, written by `set_sample_interval`.
@@ -116,6 +119,7 @@ impl Sampler {
                 state: Mutex::new(State {
                     snapshot: empty_snapshot(),
                     cpu: CpuTracker::new(logical_cores),
+                    system_cpu: SystemCpuTracker::new(),
                     sequence: 0,
                     interval,
                     running: false,
@@ -255,9 +259,16 @@ where
 
 /// Fold one successful scan into state and produce the snapshot for it.
 ///
-/// Pure with respect to the OS — it takes both scans as data — so the
-/// invariants that matter (sequence increases, timestamps progress, ports
-/// attribute to processes from the same tick) are unit-testable.
+/// Both scans arrive as data, so the invariants that matter — sequence
+/// increases, timestamps progress, ports attribute to processes from the same
+/// tick — are unit-testable without Windows.
+///
+/// The one exception is `read_telemetry`, which queries the machine directly.
+/// It is not injected because there is nothing to inject *for*: it has no
+/// inputs, every reading is independently optional, and a failure is already
+/// `None` rather than an error. Its arithmetic — the part that could be wrong —
+/// lives in `logic::telemetry` and is tested there against fabricated
+/// counters.
 fn advance(
     state: &mut State,
     captured_at_millis: i64,
@@ -303,10 +314,36 @@ fn advance(
         // Conflict detection is a later milestone (docs/ROADMAP.md). `None`
         // renders as "—" rather than as a confident zero.
         conflicts: None,
+        system: read_telemetry(state),
     };
 
     state.snapshot = snapshot.clone();
     snapshot
+}
+
+/// Machine-wide load for this tick.
+///
+/// Every reading is independently optional: a failed CPU query must not blank
+/// the memory figures, and neither may take the tick down. A field that could
+/// not be read is `None`, which the UI renders as "—" rather than as zero.
+fn read_telemetry(state: &mut State) -> SystemTelemetry {
+    let cpu_percent =
+        platform::windows::system::cpu_times().and_then(|now| state.system_cpu.observe(now));
+    let per_core_percent = platform::windows::system::per_core_times()
+        .and_then(|now| state.system_cpu.observe_per_core(now));
+    let memory = platform::windows::system::memory();
+
+    SystemTelemetry {
+        cpu_percent,
+        logical_processors: per_core_percent
+            .as_ref()
+            .map(|c| c.len() as u32)
+            .unwrap_or_else(logical_cores),
+        per_core_percent,
+        memory_total_bytes: memory.map(|m| m.total_bytes),
+        memory_used_bytes: memory.map(|m| m.used_bytes()),
+        memory_percent: memory.and_then(|m| m.percent()),
+    }
 }
 
 /// Reject a cadence that would make the sampler misbehave.
@@ -346,6 +383,12 @@ fn empty_snapshot() -> Snapshot {
         processes: Vec::new(),
         ports: Vec::new(),
         conflicts: None,
+        // Nothing has been measured yet, and the seed snapshot says so rather
+        // than showing a machine at 0% CPU with no memory.
+        system: SystemTelemetry {
+            logical_processors: logical_cores(),
+            ..SystemTelemetry::default()
+        },
     }
 }
 
@@ -406,10 +449,62 @@ mod tests {
         State {
             snapshot: empty_snapshot(),
             cpu: CpuTracker::new(4),
+            system_cpu: SystemCpuTracker::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
             running: false,
         }
+    }
+
+    // ------------------------------------------------ against the real machine
+
+    /// Telemetry has to survive a second tick to produce anything at all.
+    #[test]
+    fn a_real_tick_reports_machine_load_after_the_first_sample() {
+        let raw = platform::windows::process::enumerate().expect("process scan");
+        let mut s = State {
+            snapshot: empty_snapshot(),
+            cpu: CpuTracker::new(logical_cores()),
+            system_cpu: SystemCpuTracker::new(),
+            sequence: 0,
+            interval: Duration::from_millis(1000),
+            running: false,
+        };
+
+        // First tick: no previous sample, so CPU is honestly absent.
+        let first = advance(&mut s, time::now_unix_millis(), &raw, &[]);
+        assert!(
+            first.system.cpu_percent.is_none(),
+            "the first tick cannot measure a rate"
+        );
+        assert!(
+            first.system.memory_total_bytes.is_some(),
+            "memory needs no history"
+        );
+
+        std::thread::sleep(Duration::from_millis(120));
+
+        let second = advance(&mut s, time::now_unix_millis(), &raw, &[]);
+        let cpu = second
+            .system
+            .cpu_percent
+            .expect("a second sample produces a rate");
+        assert!((0.0..=100.0).contains(&cpu), "cpu out of range: {cpu}");
+
+        let cores = second.system.per_core_percent.expect("per-core detail");
+        assert_eq!(cores.len(), second.system.logical_processors as usize);
+        assert!(cores.iter().all(|c| (0.0..=100.0).contains(c)));
+
+        let total = second.system.memory_total_bytes.unwrap();
+        let used = second.system.memory_used_bytes.unwrap();
+        assert!(used <= total, "used memory exceeds total");
+        let percent = second.system.memory_percent.unwrap();
+        assert!((0.0..=100.0).contains(&percent));
+        println!(
+            "\nsystem: {cpu:.1}% cpu across {} cores, {percent:.1}% of {} bytes",
+            cores.len(),
+            total
+        );
     }
 
     // ---------------------------------------------------------------- interval
@@ -574,7 +669,7 @@ mod tests {
         let owned = by_port(5173);
         let process = snapshot.processes.iter().find(|p| p.pid == 1).unwrap();
         assert_eq!(owned.process_id.as_ref(), Some(&process.id));
-        assert_eq!(by_port(8000).process_id.is_some(), true);
+        assert!(by_port(8000).process_id.is_some());
 
         // A PID that was not in this tick's process scan stays informational.
         let orphan = by_port(9999);

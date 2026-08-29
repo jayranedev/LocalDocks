@@ -10,4 +10,5 @@ pub mod identity;
 pub mod ports;
 pub mod process;
 pub mod service;
+pub mod telemetry;
 pub mod url;
