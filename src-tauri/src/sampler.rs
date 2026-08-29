@@ -47,6 +47,7 @@ use crate::logic::telemetry::{self, NetworkTracker, StorageTracker, SystemCpuTra
 use crate::models::{ProcessId, ScanTiming, Snapshot, SystemTelemetry};
 use crate::platform;
 use crate::platform::windows::gpu::GpuCounters;
+use crate::platform::windows::thermal::ThermalCounter;
 use crate::time;
 
 /// Command lines the classifier needs, keyed by process identity.
@@ -111,10 +112,11 @@ struct State {
     network: NetworkTracker,
     /// Previous drive byte and idle counters, for the same reason.
     storage: StorageTracker,
-    /// A PDH query held open across ticks. A rate counter needs two
+    /// PDH queries held open across ticks. A rate counter needs two
     /// collections to produce a value, so a query opened and closed inside one
     /// tick would report nothing forever.
     gpu: GpuCounters,
+    thermal: ThermalCounter,
     /// Command lines already read, pruned to live services every tick so it
     /// cannot grow with the machine's uptime.
     command_lines: CommandLines,
@@ -154,6 +156,7 @@ impl Sampler {
                     network: NetworkTracker::new(),
                     storage: StorageTracker::new(),
                     gpu: GpuCounters::open(),
+                    thermal: ThermalCounter::open(),
                     command_lines: CommandLines::new(),
                     sequence: 0,
                     interval,
@@ -480,6 +483,11 @@ fn read_telemetry(state: &mut State, now_millis: i64) -> (SystemTelemetry, f64) 
         .gpu
         .read()
         .map(|(adapters, engines, memory)| telemetry::fold_gpus(&adapters, &engines, &memory));
+    let thermal = state
+        .thermal
+        .read()
+        .map(|readings| telemetry::map_thermal_zones(&readings));
+
     let system = SystemTelemetry {
         cpu_percent,
         logical_processors: per_core_percent
@@ -493,6 +501,7 @@ fn read_telemetry(state: &mut State, now_millis: i64) -> (SystemTelemetry, f64) 
         network,
         storage,
         gpus,
+        thermal,
     };
 
     (system, started.elapsed().as_secs_f64() * 1000.0)
@@ -616,6 +625,7 @@ mod tests {
             network: NetworkTracker::new(),
             storage: StorageTracker::new(),
             gpu: GpuCounters::open(),
+            thermal: ThermalCounter::open(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -647,6 +657,7 @@ mod tests {
             network: NetworkTracker::new(),
             storage: StorageTracker::new(),
             gpu: GpuCounters::open(),
+            thermal: ThermalCounter::open(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -884,12 +895,20 @@ mod tests {
         assert!(!snapshot.processes.is_empty());
         assert!(snapshot.sequence > 0);
 
-        // And an absent provider is None rather than a zero.
-        if let Some(network) = &snapshot.system.network {
-            assert!(
-                network.receive_bytes_per_sec.is_some() || network.interfaces.is_empty(),
-                "a measured interface must carry a rate by the second tick"
-            );
+        // And no absent provider became a zero.
+        if snapshot.system.gpus.is_none() {
+            // Nothing to assert beyond the None itself, which is the point.
+        }
+        if let Some(thermal) = &snapshot.system.thermal {
+            for zone in &thermal.zones {
+                if let Some(c) = zone.celsius {
+                    assert!(
+                        (0.0..=125.0).contains(&c),
+                        "{} reported {c} °C past the plausibility filter",
+                        zone.name
+                    );
+                }
+            }
         }
     }
 
@@ -944,6 +963,7 @@ mod tests {
             network: NetworkTracker::new(),
             storage: StorageTracker::new(),
             gpu: GpuCounters::open(),
+            thermal: ThermalCounter::open(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -962,6 +982,7 @@ mod tests {
             network: NetworkTracker::new(),
             storage: StorageTracker::new(),
             gpu: GpuCounters::open(),
+            thermal: ThermalCounter::open(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),

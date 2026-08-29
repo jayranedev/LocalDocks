@@ -47,9 +47,8 @@ tauri-plugin-log = "2"
 #   Win32_System_Ioctl                  IOCTL_DISK_PERFORMANCE, DISK_PERFORMANCE
 #   Win32_System_IO                     DeviceIoControl, for that IOCTL
 #   Win32_System_Performance            PDH, the only unelevated route to GPU
-#                                       utilisation and memory
+#                                       and ACPI thermal readings
 #   Win32_Graphics_Dxgi                 EnumAdapters1, for adapter identity
-
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
   "Wdk_System_SystemInformation",

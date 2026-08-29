@@ -150,9 +150,9 @@ export interface ProcessDetail {
  * computed this tick, almost always because it is the first sample and a rate
  * needs two.
  *
- * CPU and memory are flat because they always were. The newer metrics nest one
- * level, and only because each genuinely has per-device detail the machine-wide
- * figure is derived from.
+ * CPU and memory are flat because they always were. The four newer metrics nest
+ * one level, and only because each genuinely has per-device detail the
+ * machine-wide figure is derived from.
  */
 export interface SystemTelemetry {
   /** Machine-wide utilisation over the last interval, 0–100. */
@@ -175,6 +175,8 @@ export interface SystemTelemetry {
    * would claim the provider answered and found no adapters.
    */
   gpus: GpuTelemetry[] | null;
+  /** Null when the platform firmware exposes no ACPI thermal zones. */
+  thermal: ThermalTelemetry | null;
 }
 
 /**
@@ -234,6 +236,24 @@ export interface GpuTelemetry {
   dedicatedMemoryUsedBytes: number | null;
   dedicatedMemoryTotalBytes: number | null;
   sharedMemoryUsedBytes: number | null;
+}
+
+/**
+ * ACPI thermal zones — **not CPU or GPU package temperatures.**
+ *
+ * A zone's name comes from the OEM firmware and its mapping to a physical
+ * component is unspecified. A machine may expose none. The UI must label these
+ * as zones and never as a component's temperature.
+ */
+export interface ThermalTelemetry {
+  zones: ThermalZone[];
+}
+
+export interface ThermalZone {
+  /** The firmware's own name, e.g. `\_TZ.TSZ0`. */
+  name: string;
+  /** Null when the zone exists but its reading is not a temperature. */
+  celsius: number | null;
 }
 
 /** How long one sampler tick took, in milliseconds. */

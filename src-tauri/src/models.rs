@@ -196,10 +196,10 @@ pub struct PortRow {
 /// # Shape
 ///
 /// CPU and memory stay flat because they were already flat and nothing here
-/// requires changing them. Network and storage nest one level, and only
-/// because each genuinely has per-device detail — interfaces, drives, adapters
-/// — that the machine-wide figure is derived from. No level of nesting exists
-/// for extensibility alone.
+/// requires changing them. The four new metrics nest one level, and only
+/// because each genuinely has per-device detail — interfaces, drives, adapters,
+/// zones — that the machine-wide figure is derived from. No level of nesting
+/// exists for extensibility alone.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemTelemetry {
@@ -228,6 +228,9 @@ pub struct SystemTelemetry {
     /// with a basic display adapter, or a pre-WDDM-2.0 driver. An empty list
     /// would claim the provider answered and found no adapters.
     pub gpus: Option<Vec<GpuTelemetry>>,
+    /// `None` when the platform firmware exposes no ACPI thermal zones, which
+    /// is common. See `ThermalTelemetry` for what this is and is not.
+    pub thermal: Option<ThermalTelemetry>,
 }
 
 /// TS: `interface NetworkTelemetry`
@@ -322,6 +325,36 @@ pub struct GpuTelemetry {
     /// counters know about but DXGI did not enumerate.
     pub dedicated_memory_total_bytes: Option<u64>,
     pub shared_memory_used_bytes: Option<u64>,
+}
+
+/// TS: `interface ThermalTelemetry`
+///
+/// **These are ACPI thermal zones, and they are not CPU or GPU package
+/// temperatures.** The distinction is not pedantry. A zone's name is chosen by
+/// the OEM firmware, its mapping to any physical component is unspecified, and
+/// a machine may expose none, one, or several. On the development machine this
+/// was built against, three zones are exposed and one of them reports 0 K.
+///
+/// So the zone name is reported verbatim and nothing is labelled "CPU". A
+/// reading outside the range a real component could be in is reported as not
+/// reporting rather than converted into a plausible-looking number. Package
+/// temperature is deferred: reaching it needs a kernel driver, and LocalDocks
+/// does not ship one.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThermalTelemetry {
+    pub zones: Vec<ThermalZone>,
+}
+
+/// TS: `interface ThermalZone`
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThermalZone {
+    /// The firmware's own name for the zone, e.g. `\_TZ.TSZ0`.
+    pub name: String,
+    /// `None` when the zone is present but its reading is not a temperature —
+    /// a zone reporting 0 K is a stub, not a very cold component.
+    pub celsius: Option<f32>,
 }
 
 /// TS: `interface ScanTiming` — how long this tick took, in milliseconds.
@@ -496,6 +529,7 @@ mod tests {
             "network",
             "storage",
             "gpus",
+            "thermal",
         ] {
             assert!(
                 v.get(key).is_some(),
@@ -511,6 +545,7 @@ mod tests {
             "network",
             "storage",
             "gpus",
+            "thermal",
         ] {
             assert!(
                 v[key].is_null(),
@@ -561,6 +596,18 @@ mod tests {
                 dedicated_memory_total_bytes: Some(8_589_934_592),
                 shared_memory_used_bytes: Some(72_081_408),
             }]),
+            thermal: Some(ThermalTelemetry {
+                zones: vec![
+                    ThermalZone {
+                        name: r"\_TZ.TSZ0".into(),
+                        celsius: Some(57.9),
+                    },
+                    ThermalZone {
+                        name: r"\_TZ.TZ01".into(),
+                        celsius: None,
+                    },
+                ],
+            }),
         };
         let v = serde_json::to_value(&telemetry).unwrap();
 
@@ -574,9 +621,15 @@ mod tests {
         );
         assert_eq!(v["storage"]["activePercent"].as_f64().unwrap(), 3.5);
         assert_eq!(v["storage"]["drives"][0]["readBytesPerSec"], 2_048.0);
-
         assert_eq!(v["gpus"][0]["utilizationPercent"].as_f64().unwrap(), 41.0);
         assert_eq!(v["gpus"][0]["dedicatedMemoryUsedBytes"], 1_796_993_024u64);
+        // f32 widened to f64 in JSON, so compare the value rather than the
+        // exact decimal expansion.
+        let celsius = v["thermal"]["zones"][0]["celsius"].as_f64().unwrap();
+        assert!((celsius - 57.9).abs() < 0.001, "got {celsius}");
+        // A zone present but not reporting.
+        assert!(v["thermal"]["zones"][1]["celsius"].is_null());
+        assert!(v["thermal"]["zones"][1].get("celsius").is_some());
 
         // Nothing snake_case anywhere in the tree.
         let text = serde_json::to_string(&telemetry).unwrap();

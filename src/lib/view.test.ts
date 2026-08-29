@@ -27,6 +27,7 @@ const NO_TELEMETRY: SystemTelemetry = {
   network: null,
   storage: null,
   gpus: null,
+  thermal: null,
 };
 
 const NO_TIMING = {

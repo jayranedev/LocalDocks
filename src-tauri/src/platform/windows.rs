@@ -12,3 +12,4 @@ pub mod ports;
 pub mod process;
 pub mod storage;
 pub mod system;
+pub mod thermal;
