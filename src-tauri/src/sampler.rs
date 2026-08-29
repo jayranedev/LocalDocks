@@ -89,7 +89,13 @@ pub const MAX_INTERVAL_MS: u64 = 60_000;
 /// called directly, exactly as docs/BACKEND.md requires.
 pub enum SamplerEvent {
     /// A scan completed. Emitted as `services:update`.
-    Update(Snapshot),
+    ///
+    /// Boxed because the two variants are wildly different sizes: a `Snapshot`
+    /// carries the whole telemetry block inline, while a failure is a string.
+    /// An unboxed enum is as large as its largest variant, so every failure —
+    /// and every `SamplerEvent` local anywhere — would reserve a snapshot's
+    /// worth of stack to hold an error message.
+    Update(Box<Snapshot>),
     /// A scan failed. Emitted as `services:error`. The previous good snapshot
     /// is still in state, so the UI keeps showing it behind a warning.
     Failure(String),
@@ -293,7 +299,7 @@ where
                     ports_millis,
                     telemetry_millis: snapshot.timing.telemetry_millis,
                 };
-                SamplerEvent::Update(snapshot)
+                SamplerEvent::Update(Box::new(snapshot))
             }
             (Err(e), _) => {
                 // Requirement: keep the previous good snapshot. Nothing in
@@ -803,27 +809,15 @@ mod tests {
         assert!(second.system.cpu_percent.is_some());
         // Every section that is present belongs to this snapshot's moment: the
         // trackers advanced exactly twice, so a rate exists exactly now.
-        if second.system.network.is_some() {
+        if let Some(network) = &second.system.network {
             assert!(
-                second
-                    .system
-                    .network
-                    .as_ref()
-                    .unwrap()
-                    .receive_bytes_per_sec
-                    .is_some(),
+                network.receive_bytes_per_sec.is_some(),
                 "the network tracker did not advance with the tick"
             );
         }
-        if second.system.storage.is_some() {
+        if let Some(storage) = &second.system.storage {
             assert!(
-                second
-                    .system
-                    .storage
-                    .as_ref()
-                    .unwrap()
-                    .read_bytes_per_sec
-                    .is_some(),
+                storage.read_bytes_per_sec.is_some(),
                 "the storage tracker did not advance with the tick"
             );
         }
@@ -1328,7 +1322,7 @@ mod tests {
                 let n = concurrent.fetch_add(1, Ordering::SeqCst) + 1;
                 max_concurrent.fetch_max(n, Ordering::SeqCst);
                 match event {
-                    SamplerEvent::Update(s) => lock(&seen).push((Instant::now(), s)),
+                    SamplerEvent::Update(s) => lock(&seen).push((Instant::now(), *s)),
                     SamplerEvent::Failure(_) => {
                         failures.fetch_add(1, Ordering::SeqCst);
                     }
@@ -1453,7 +1447,7 @@ mod tests {
             let seen = Arc::clone(&seen);
             sampler.start(move |event| {
                 if let SamplerEvent::Update(s) = event {
-                    lock(&seen).push(s);
+                    lock(&seen).push(*s);
                 }
             });
         }
