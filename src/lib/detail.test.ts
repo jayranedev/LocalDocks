@@ -22,6 +22,7 @@ function snapshot(): Snapshot {
       memoryPercent: null,
       network: null,
       storage: null,
+      gpus: null,
     },
     timing: { totalMillis: 0, processesMillis: 0, portsMillis: 0, telemetryMillis: 0 },
     registryVersion: 1,

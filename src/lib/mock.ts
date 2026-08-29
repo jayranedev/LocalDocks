@@ -355,6 +355,15 @@ function telemetry(): SystemTelemetry {
         },
       ],
     },
+    gpus: [
+      {
+        name: 'Mock Discrete GPU',
+        utilizationPercent: Number(Math.min(100, drift(22, sequence + 6, 16)).toFixed(1)),
+        dedicatedMemoryUsedBytes: Math.round(drift(1.7, sequence, 0.2) * 1024 ** 3),
+        dedicatedMemoryTotalBytes: 8 * 1024 ** 3,
+        sharedMemoryUsedBytes: Math.round(drift(0.07, sequence, 0.01) * 1024 ** 3),
+      },
+    ],
   };
 }
 

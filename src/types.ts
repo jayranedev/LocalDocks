@@ -150,9 +150,9 @@ export interface ProcessDetail {
  * computed this tick, almost always because it is the first sample and a rate
  * needs two.
  *
- * CPU and memory are flat because they always were. Network and storage nest
- * one level, and only because each genuinely has per-device detail the
- * machine-wide figure is derived from.
+ * CPU and memory are flat because they always were. The newer metrics nest one
+ * level, and only because each genuinely has per-device detail the machine-wide
+ * figure is derived from.
  */
 export interface SystemTelemetry {
   /** Machine-wide utilisation over the last interval, 0–100. */
@@ -169,6 +169,12 @@ export interface SystemTelemetry {
   memoryPercent: number | null;
   network: NetworkTelemetry | null;
   storage: StorageTelemetry | null;
+  /**
+   * Null when this machine exposes no GPU performance counters — a VM with a
+   * basic display adapter, or a driver older than WDDM 2.0. An empty array
+   * would claim the provider answered and found no adapters.
+   */
+  gpus: GpuTelemetry[] | null;
 }
 
 /**
@@ -213,6 +219,21 @@ export interface StorageDrive {
   writeBytesPerSec: number | null;
   /** Share of the interval the drive was not idle, 0–100. */
   activePercent: number | null;
+}
+
+/**
+ * One display adapter.
+ *
+ * Utilisation is per-engine values summed across processes and then the
+ * **maximum across engine types** — 3D, Copy and Video Decode are separate
+ * hardware queues that run concurrently, so adding them exceeds 100%.
+ */
+export interface GpuTelemetry {
+  name: string;
+  utilizationPercent: number | null;
+  dedicatedMemoryUsedBytes: number | null;
+  dedicatedMemoryTotalBytes: number | null;
+  sharedMemoryUsedBytes: number | null;
 }
 
 /** How long one sampler tick took, in milliseconds. */

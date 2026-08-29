@@ -43,9 +43,10 @@ use crate::logic::ports::map_ports;
 use crate::logic::process::map_processes;
 use crate::logic::registry::REGISTRY_VERSION;
 use crate::logic::service::join_services;
-use crate::logic::telemetry::{NetworkTracker, StorageTracker, SystemCpuTracker};
+use crate::logic::telemetry::{self, NetworkTracker, StorageTracker, SystemCpuTracker};
 use crate::models::{ProcessId, ScanTiming, Snapshot, SystemTelemetry};
 use crate::platform;
+use crate::platform::windows::gpu::GpuCounters;
 use crate::time;
 
 /// Command lines the classifier needs, keyed by process identity.
@@ -110,6 +111,10 @@ struct State {
     network: NetworkTracker,
     /// Previous drive byte and idle counters, for the same reason.
     storage: StorageTracker,
+    /// A PDH query held open across ticks. A rate counter needs two
+    /// collections to produce a value, so a query opened and closed inside one
+    /// tick would report nothing forever.
+    gpu: GpuCounters,
     /// Command lines already read, pruned to live services every tick so it
     /// cannot grow with the machine's uptime.
     command_lines: CommandLines,
@@ -148,6 +153,7 @@ impl Sampler {
                     system_cpu: SystemCpuTracker::new(),
                     network: NetworkTracker::new(),
                     storage: StorageTracker::new(),
+                    gpu: GpuCounters::open(),
                     command_lines: CommandLines::new(),
                     sequence: 0,
                     interval,
@@ -470,6 +476,10 @@ fn read_telemetry(state: &mut State, now_millis: i64) -> (SystemTelemetry, f64) 
         .map(|interfaces| state.network.observe(now_millis, &interfaces));
     let storage = platform::windows::storage::drives()
         .map(|drives| state.storage.observe(now_millis, &drives));
+    let gpus = state
+        .gpu
+        .read()
+        .map(|(adapters, engines, memory)| telemetry::fold_gpus(&adapters, &engines, &memory));
     let system = SystemTelemetry {
         cpu_percent,
         logical_processors: per_core_percent
@@ -482,6 +492,7 @@ fn read_telemetry(state: &mut State, now_millis: i64) -> (SystemTelemetry, f64) 
         memory_percent: memory.and_then(|m| m.percent()),
         network,
         storage,
+        gpus,
     };
 
     (system, started.elapsed().as_secs_f64() * 1000.0)
@@ -604,6 +615,7 @@ mod tests {
             system_cpu: SystemCpuTracker::new(),
             network: NetworkTracker::new(),
             storage: StorageTracker::new(),
+            gpu: GpuCounters::open(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -634,6 +646,7 @@ mod tests {
             system_cpu: SystemCpuTracker::new(),
             network: NetworkTracker::new(),
             storage: StorageTracker::new(),
+            gpu: GpuCounters::open(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -930,6 +943,7 @@ mod tests {
             system_cpu: SystemCpuTracker::new(),
             network: NetworkTracker::new(),
             storage: StorageTracker::new(),
+            gpu: GpuCounters::open(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -947,6 +961,7 @@ mod tests {
             system_cpu: SystemCpuTracker::new(),
             network: NetworkTracker::new(),
             storage: StorageTracker::new(),
+            gpu: GpuCounters::open(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),

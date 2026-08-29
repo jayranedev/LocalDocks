@@ -1,5 +1,10 @@
 import type { ReactNode } from 'react';
-import type { NetworkTelemetry, StorageTelemetry, SystemTelemetry } from '../types';
+import type {
+  GpuTelemetry,
+  NetworkTelemetry,
+  StorageTelemetry,
+  SystemTelemetry,
+} from '../types';
 import { formatBytes, formatRate } from '../lib/format';
 import { SectionLabel } from './ui';
 
@@ -41,6 +46,7 @@ export function TelemetryCards({ system }: { system: SystemTelemetry }) {
         <MemoryCard system={system} />
         <NetworkCard network={system.network} />
         <StorageCard storage={system.storage} />
+        <GpuCard gpus={system.gpus} />
       </div>
     </section>
   );
@@ -254,5 +260,76 @@ function StorageCard({ storage }: { storage: StorageTelemetry | null }) {
         <Flow label="↑ write" value={writeBytesPerSec} />
       </div>
     </Card>
+  );
+}
+
+function GpuCard({ gpus }: { gpus: GpuTelemetry[] | null }) {
+  if (gpus === null || gpus.length === 0) {
+    return (
+      <Unavailable
+        label="GPU"
+        reason="No GPU performance counters on this machine. They need Windows 10 1709 or later and a WDDM 2.0 driver."
+      />
+    );
+  }
+
+  /* The busiest adapter leads: on a laptop with an integrated and a discrete
+     GPU, the interesting one is whichever is working. */
+  const lead =
+    [...gpus].sort((a, b) => (b.utilizationPercent ?? -1) - (a.utilizationPercent ?? -1))[0] ??
+    gpus[0];
+  const used = lead.dedicatedMemoryUsedBytes;
+  const total = lead.dedicatedMemoryTotalBytes;
+
+  return (
+    <Card
+      label="GPU"
+      value={lead.utilizationPercent === null ? '—' : pct(lead.utilizationPercent)}
+      sub={lead.name}
+    >
+      <Meter percent={lead.utilizationPercent} />
+      <div className="mt-2 space-y-1">
+        <Reading
+          label="dedicated"
+          value={
+            used === null
+              ? null
+              : total
+                ? `${formatBytes(used)} of ${formatBytes(total)}`
+                : formatBytes(used)
+          }
+        />
+        <Reading
+          label="shared"
+          value={
+            lead.sharedMemoryUsedBytes === null ? null : formatBytes(lead.sharedMemoryUsedBytes)
+          }
+        />
+      </div>
+      {gpus.length > 1 && (
+        <p className="mt-2 text-[10.5px] text-muted">
+          {gpus.length - 1} other adapter{gpus.length === 2 ? '' : 's'} on this machine
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function Reading({
+  label,
+  value,
+  missing = '—',
+}: {
+  label: string;
+  value: string | null;
+  missing?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2 font-mono text-[11.5px]">
+      <span className="truncate text-muted">{label}</span>
+      <span className={value === null ? 'text-muted' : 'text-secondary tabular-nums'}>
+        {value ?? missing}
+      </span>
+    </div>
   );
 }

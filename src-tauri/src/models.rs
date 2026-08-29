@@ -197,9 +197,9 @@ pub struct PortRow {
 ///
 /// CPU and memory stay flat because they were already flat and nothing here
 /// requires changing them. Network and storage nest one level, and only
-/// because each genuinely has per-device detail — interfaces, drives — that the
-/// machine-wide figure is derived from. No level of nesting exists for
-/// extensibility alone.
+/// because each genuinely has per-device detail — interfaces, drives, adapters
+/// — that the machine-wide figure is derived from. No level of nesting exists
+/// for extensibility alone.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemTelemetry {
@@ -224,6 +224,10 @@ pub struct SystemTelemetry {
     pub network: Option<NetworkTelemetry>,
     /// `None` if no physical drive could be opened.
     pub storage: Option<StorageTelemetry>,
+    /// `None` when this machine exposes no GPU performance counters — a VM
+    /// with a basic display adapter, or a pre-WDDM-2.0 driver. An empty list
+    /// would claim the provider answered and found no adapters.
+    pub gpus: Option<Vec<GpuTelemetry>>,
 }
 
 /// TS: `interface NetworkTelemetry`
@@ -295,6 +299,29 @@ pub struct StorageDrive {
     /// time rather than from busy time, because that is the counter Windows
     /// actually maintains, and it is what Task Manager calls "Active time".
     pub active_percent: Option<f32>,
+}
+
+/// TS: `interface GpuTelemetry` — one display adapter.
+///
+/// Utilisation comes from the same performance counters Task Manager uses.
+/// Per-engine values are summed across processes and then the **maximum across
+/// engine types** is taken, not the sum: 3D, Copy, Video Decode and the rest
+/// are separate hardware queues that run concurrently, so adding them reports
+/// well over 100% on a machine doing one thing.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuTelemetry {
+    /// Adapter description from DXGI, e.g. "NVIDIA GeForce RTX 4070 Laptop
+    /// GPU". Falls back to the adapter LUID if DXGI did not enumerate it.
+    pub name: String,
+    /// `None` when the adapter has memory counters but no engine counters,
+    /// which some virtual and remote adapters do.
+    pub utilization_percent: Option<f32>,
+    pub dedicated_memory_used_bytes: Option<u64>,
+    /// Installed dedicated video memory, from DXGI. `None` for an adapter the
+    /// counters know about but DXGI did not enumerate.
+    pub dedicated_memory_total_bytes: Option<u64>,
+    pub shared_memory_used_bytes: Option<u64>,
 }
 
 /// TS: `interface ScanTiming` — how long this tick took, in milliseconds.
@@ -468,6 +495,7 @@ mod tests {
             "memoryPercent",
             "network",
             "storage",
+            "gpus",
         ] {
             assert!(
                 v.get(key).is_some(),
@@ -482,6 +510,7 @@ mod tests {
             "memoryPercent",
             "network",
             "storage",
+            "gpus",
         ] {
             assert!(
                 v[key].is_null(),
@@ -525,6 +554,13 @@ mod tests {
                     active_percent: Some(3.5),
                 }],
             }),
+            gpus: Some(vec![GpuTelemetry {
+                name: "Test GPU".into(),
+                utilization_percent: Some(41.0),
+                dedicated_memory_used_bytes: Some(1_796_993_024),
+                dedicated_memory_total_bytes: Some(8_589_934_592),
+                shared_memory_used_bytes: Some(72_081_408),
+            }]),
         };
         let v = serde_json::to_value(&telemetry).unwrap();
 
@@ -539,12 +575,17 @@ mod tests {
         assert_eq!(v["storage"]["activePercent"].as_f64().unwrap(), 3.5);
         assert_eq!(v["storage"]["drives"][0]["readBytesPerSec"], 2_048.0);
 
+        assert_eq!(v["gpus"][0]["utilizationPercent"].as_f64().unwrap(), 41.0);
+        assert_eq!(v["gpus"][0]["dedicatedMemoryUsedBytes"], 1_796_993_024u64);
+
         // Nothing snake_case anywhere in the tree.
         let text = serde_json::to_string(&telemetry).unwrap();
         for leaked in [
             "receive_bytes_per_sec",
             "per_core_percent",
             "active_percent",
+            "utilization_percent",
+            "dedicated_memory_used_bytes",
             "link_speed_bits_per_sec",
         ] {
             assert!(
