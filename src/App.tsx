@@ -114,7 +114,7 @@ export default function App() {
   const showDetail = target !== null && isInteractive(screen);
 
   return (
-    <div className="flex h-full flex-col bg-bg text-t1">
+    <div className="flex h-full flex-col bg-background text-primary">
       <TitleBar onOpenPalette={() => setPaletteOpen(true)} onOpenSettings={() => navigate('settings')} />
 
       <div className="flex min-h-0 flex-1">

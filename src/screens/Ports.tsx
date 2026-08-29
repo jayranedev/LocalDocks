@@ -99,13 +99,13 @@ export function Ports({ snapshot, selectedId, onSelect }: Props) {
           <SearchInput value={query} onChange={setQuery} placeholder="Filter by port, PID or process…" />
           <FilterChips options={FILTERS} value={filter} onChange={setFilter} />
           <span className="flex-1" />
-          <span className="text-[11.5px] text-t3">
+          <span className="text-[11.5px] text-muted">
             {rows.length} of {snapshot.ports.length} · sorted by {SORT_LABELS[sort]}
           </span>
         </div>
 
         <div className="mb-3">
-          <Note icon="warn" tone="ac">
+          <Note icon="warn" tone="accent">
             Dev servers commonly bind both IPv4 and IPv6. Services groups these by PID — here they stay
             separate on purpose.
           </Note>
@@ -113,8 +113,8 @@ export function Ports({ snapshot, selectedId, onSelect }: Props) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 pb-5">
-        <div className="overflow-hidden rounded-[9px] border border-bd bg-surf">
-          <div className="flex h-[34px] items-center gap-[13px] border-b border-bd bg-surfhi px-3.5">
+        <div className="overflow-hidden rounded-[9px] border border-border bg-surface">
+          <div className="flex h-[34px] items-center gap-[13px] border-b border-border bg-surface-hover px-3.5">
             <Th width={62} onClick={() => setSort('port')} active={sort === 'port'}>
               PORT
             </Th>
@@ -141,7 +141,7 @@ export function Ports({ snapshot, selectedId, onSelect }: Props) {
           </div>
 
           {rows.length === 0 ? (
-            <p className="px-3.5 py-10 text-center text-[12.5px] text-t3">
+            <p className="px-3.5 py-10 text-center text-[12.5px] text-muted">
               No ports match the current search or filter.
             </p>
           ) : (
@@ -156,23 +156,23 @@ export function Ports({ snapshot, selectedId, onSelect }: Props) {
                     r.processId && onSelect(r.processId, { port: r.port, address: r.address })
                   }
                   title={selectable ? undefined : 'Owning process could not be identified'}
-                  className={`group flex h-[38px] w-full items-center gap-[13px] border-b border-bd px-3.5 text-left transition-colors last:border-b-0 ${
-                    selectable ? 'cursor-pointer hover:bg-sel' : 'cursor-default'
-                  } ${r.processId === selectedId ? 'bg-sel' : tinted.get(r) ? 'bg-surfhi' : ''}`}
+                  className={`group flex h-[38px] w-full items-center gap-[13px] border-b border-border px-3.5 text-left transition-colors last:border-b-0 ${
+                    selectable ? 'cursor-pointer hover:bg-surface-selected' : 'cursor-default'
+                  } ${r.processId === selectedId ? 'bg-surface-selected' : tinted.get(r) ? 'bg-surface-hover' : ''}`}
                 >
-                  <span className="w-[62px] font-mono text-xs font-medium text-ac tabular-nums">
+                  <span className="w-[62px] font-mono text-xs font-medium text-accent tabular-nums">
                     {r.port}
                   </span>
-                  <span className="w-[58px] font-mono text-[11.5px] text-t3">{r.protocol}</span>
-                  <span className="w-[150px] font-mono text-[11.5px] text-t2">
+                  <span className="w-[58px] font-mono text-[11.5px] text-muted">{r.protocol}</span>
+                  <span className="w-[150px] font-mono text-[11.5px] text-secondary">
                     {r.address}:{r.port}
                   </span>
-                  <span className="w-[60px] font-mono text-[11.5px] text-t3 tabular-nums">{r.pid}</span>
-                  <span className="w-[118px] font-mono text-[11.5px] text-t3">{r.processName}</span>
+                  <span className="w-[60px] font-mono text-[11.5px] text-muted tabular-nums">{r.pid}</span>
+                  <span className="w-[118px] font-mono text-[11.5px] text-muted">{r.processName}</span>
                   <span className="flex-1" />
-                  <span className="w-[130px] text-xs text-t1">{r.serviceLabel ?? '—'}</span>
-                  <span className="w-[74px] text-right text-[11px] text-grn">{r.state}</span>
-                  <span className="w-[18px] text-t3 opacity-0 transition-opacity group-hover:opacity-100">
+                  <span className="w-[130px] text-xs text-primary">{r.serviceLabel ?? '—'}</span>
+                  <span className="w-[74px] text-right text-[11px] text-success">{r.state}</span>
+                  <span className="w-[18px] text-muted opacity-0 transition-opacity group-hover:opacity-100">
                     {selectable && <Icon name="chevron" size={14} />}
                   </span>
                 </button>

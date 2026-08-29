@@ -20,12 +20,19 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  theme: 'system',
+  theme: 'local-dark',
   intervalMs: 1000,
 };
 
-const THEMES: Theme[] = ['system', 'light', 'dark'];
+export const THEMES: Theme[] = ['local-dark', 'dark', 'light'];
 export const INTERVALS = [500, 1000, 2000, 5000];
+
+/** What the theme toggle shows. Kept beside the list it labels. */
+export const THEME_LABELS: Record<Theme, string> = {
+  'local-dark': 'Local Dark',
+  dark: 'Dark',
+  light: 'Light',
+};
 
 /**
  * Validate rather than trust. Stored JSON is user-editable and survives
@@ -35,6 +42,9 @@ function coerce(raw: unknown): Settings {
   if (typeof raw !== 'object' || raw === null) return DEFAULT_SETTINGS;
   const obj = raw as Record<string, unknown>;
 
+  // A stored 'system' from before explicit theming, or anything hand-edited,
+  // falls through to the default rather than reaching the UI as a data-theme
+  // value with no matching CSS block.
   const theme = THEMES.includes(obj.theme as Theme)
     ? (obj.theme as Theme)
     : DEFAULT_SETTINGS.theme;

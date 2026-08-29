@@ -4,22 +4,24 @@ import { Icon, type IconName } from './Icon';
 /* Small shared primitives. Kept in one file on purpose — a folder of
    twelve one-component files would be architecture for its own sake. */
 
-export function Chip({
-  children,
-  tone = 'neutral',
-}: {
-  children: ReactNode;
-  tone?: 'neutral' | 'accent' | 'quiet';
-}) {
-  const tones = {
-    neutral: 'bg-surfhi border-bd text-t3',
-    accent: 'border-transparent text-ac',
-    quiet: 'bg-transparent border-bd text-t3',
-  } as const;
+export type ChipTone = 'neutral' | 'accent' | 'future' | 'quiet';
+
+/**
+ * Every tone names a role, not a colour. `future` is the one worth calling
+ * out: it marks a module that is in the nav but has not shipped, and it is the
+ * only place the theme's second accent is spent.
+ */
+const CHIP_TONES: Record<ChipTone, string> = {
+  neutral: 'bg-surface-hover border-border text-muted',
+  accent: 'border-transparent bg-accent-soft text-accent',
+  future: 'border-transparent bg-accent-alt-soft text-accent-alt',
+  quiet: 'bg-transparent border-border-strong text-muted',
+};
+
+export function Chip({ children, tone = 'neutral' }: { children: ReactNode; tone?: ChipTone }) {
   return (
     <span
-      className={`inline-flex h-[18px] items-center rounded-[5px] border px-1.5 text-[10px] font-semibold tracking-[0.03em] whitespace-nowrap ${tones[tone]}`}
-      style={tone === 'accent' ? { background: 'color-mix(in srgb, var(--c-ac) 14%, transparent)' } : undefined}
+      className={`inline-flex h-[18px] items-center rounded-[5px] border px-1.5 text-[10px] font-semibold tracking-[0.03em] whitespace-nowrap ${CHIP_TONES[tone]}`}
     >
       {children}
     </span>
@@ -30,27 +32,40 @@ export function Chip({
 export function PortBadge({ port }: { port: number }) {
   return (
     <span
-      className="inline-flex h-[21px] items-center rounded-[5px] px-[7px] font-mono text-[11.5px] font-medium text-ac"
-      style={{ background: 'color-mix(in srgb, var(--c-ac) 14%, transparent)' }}
+      className="inline-flex h-[21px] items-center rounded-[5px] bg-accent-soft px-[7px] font-mono text-[11.5px] font-medium text-accent"
     >
       :{port}
     </span>
   );
 }
 
-export function StatusDot({ tone = 'grn' }: { tone?: 'grn' | 't3' | 'red' | 'amb' }) {
-  const color = `var(--c-${tone})`;
+export type StatusTone = 'success' | 'muted' | 'danger' | 'warning';
+
+/**
+ * Tone -> tokens as a lookup rather than a template string. Building
+ * `var(--${tone})` out of a prop means a typo renders an invisible element at
+ * runtime instead of failing the build.
+ */
+const STATUS_TONES: Record<StatusTone, { dot: string; ring: string }> = {
+  success: { dot: 'var(--success)', ring: 'var(--success-soft)' },
+  muted: { dot: 'var(--text-muted)', ring: 'var(--muted-soft)' },
+  danger: { dot: 'var(--danger)', ring: 'var(--danger-soft)' },
+  warning: { dot: 'var(--warning)', ring: 'var(--warning-soft)' },
+};
+
+export function StatusDot({ tone = 'success' }: { tone?: StatusTone }) {
+  const { dot, ring } = STATUS_TONES[tone];
   return (
     <span
       className="size-2 flex-none rounded-full"
-      style={{ background: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 18%, transparent)` }}
+      style={{ background: dot, boxShadow: `0 0 0 3px ${ring}` }}
     />
   );
 }
 
 export function Kbd({ children }: { children: ReactNode }) {
   return (
-    <span className="inline-flex h-[17px] items-center rounded border border-bd bg-bg px-1 font-mono text-[10px] text-t3">
+    <span className="inline-flex h-[17px] items-center rounded border border-border bg-background px-1 font-mono text-[10px] text-muted">
       {children}
     </span>
   );
@@ -72,22 +87,17 @@ export function Button({
   disabled?: boolean;
 }) {
   const variants = {
-    default: 'border-bd bg-surf text-t2 hover:border-bdhi hover:text-t1',
-    primary: 'border-transparent text-ac',
-    danger: 'border-bd bg-surf text-red hover:border-red',
-    dangerSolid: 'border-red bg-red text-white hover:opacity-90',
+    default: 'border-border bg-surface text-secondary hover:border-border-strong hover:text-primary',
+    primary: 'border-transparent bg-accent-soft text-accent',
+    danger: 'border-border bg-surface text-danger hover:border-danger',
+    dangerSolid: 'border-danger bg-danger text-danger-contrast hover:opacity-90',
   } as const;
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex h-8 items-center justify-center gap-[7px] rounded-[7px] border px-3 text-xs font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${variants[variant]} ${className}`}
-      style={
-        variant === 'primary'
-          ? { background: 'color-mix(in srgb, var(--c-ac) 14%, transparent)' }
-          : undefined
-      }
+      className={`ld-disabled flex h-8 items-center justify-center gap-[7px] rounded-[7px] border px-3 text-xs font-medium whitespace-nowrap transition-colors ${variants[variant]} ${className}`}
     >
       {icon && <Icon name={icon} />}
       {children && <span>{children}</span>}
@@ -110,7 +120,7 @@ export function IconButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="flex size-7 items-center justify-center rounded-md border border-transparent text-t3 transition-colors hover:border-bdhi hover:text-t1"
+      className="flex size-7 items-center justify-center rounded-md border border-transparent text-muted transition-colors hover:border-border-strong hover:text-primary"
     >
       <Icon name={name} />
     </button>
@@ -121,21 +131,38 @@ export function PageHeader({ title, subtitle }: { title: string; subtitle: strin
   return (
     <div>
       <h1 className="text-[19px] font-semibold tracking-[-0.015em]">{title}</h1>
-      <p className="mt-[5px] text-[12.5px] leading-relaxed text-t2">{subtitle}</p>
+      <p className="mt-[5px] text-[12.5px] leading-relaxed text-secondary">{subtitle}</p>
     </div>
   );
 }
 
 export function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <span className="text-[10px] font-semibold tracking-[0.08em] text-t3">{children}</span>
+    <span className="text-[10px] font-semibold tracking-[0.08em] text-muted">{children}</span>
   );
 }
 
-export function Note({ icon, tone = 't3', children }: { icon: IconName; tone?: string; children: ReactNode }) {
+/** Icon tones for `Note`. Classes, so the token binding is checked at build. */
+const NOTE_TONES: Record<StatusTone | 'accent', string> = {
+  muted: 'text-muted',
+  accent: 'text-accent',
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-danger',
+};
+
+export function Note({
+  icon,
+  tone = 'muted',
+  children,
+}: {
+  icon: IconName;
+  tone?: StatusTone | 'accent';
+  children: ReactNode;
+}) {
   return (
-    <div className="flex items-center gap-[9px] rounded-[7px] border border-bd bg-surf px-3 py-[9px] text-[11.5px] leading-relaxed text-t2">
-      <span style={{ color: `var(--c-${tone})` }} className="flex-none">
+    <div className="flex items-center gap-[9px] rounded-[7px] border border-border bg-surface px-3 py-[9px] text-[11.5px] leading-relaxed text-secondary">
+      <span className={`flex-none ${NOTE_TONES[tone]}`}>
         <Icon name={icon} />
       </span>
       <span>{children}</span>
@@ -145,7 +172,7 @@ export function Note({ icon, tone = 't3', children }: { icon: IconName; tone?: s
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-[9px] border border-bd bg-surf ${className}`}>{children}</div>
+    <div className={`rounded-[9px] border border-border bg-surface ${className}`}>{children}</div>
   );
 }
 
@@ -158,18 +185,18 @@ export function StatTile({
   label: string;
   value: string;
   sub: string;
-  tone?: 'ac' | 'grn';
+  tone?: 'accent' | 'success';
 }) {
+  const toneClass = tone === 'accent' ? 'text-accent' : tone === 'success' ? 'text-success' : '';
   return (
-    <div className="rounded-[9px] border border-bd bg-surf px-[15px] py-[13px]">
-      <div className="text-[10px] font-semibold tracking-[0.08em] text-t3">{label}</div>
+    <div className="rounded-[9px] border border-border bg-surface px-[15px] py-[13px]">
+      <div className="text-[10px] font-semibold tracking-[0.08em] text-muted">{label}</div>
       <div
-        className="my-[7px] text-[25px] font-semibold tracking-[-0.02em] tabular-nums"
-        style={tone ? { color: `var(--c-${tone})` } : undefined}
+        className={`my-[7px] text-[25px] font-semibold tracking-[-0.02em] tabular-nums ${toneClass}`}
       >
         {value}
       </div>
-      <div className="text-[11px] text-t3">{sub}</div>
+      <div className="text-[11px] text-muted">{sub}</div>
     </div>
   );
 }
@@ -195,8 +222,8 @@ export function Th({
       disabled={!onClick}
       style={{ width, textAlign: align }}
       className={`text-[10px] font-semibold tracking-[0.07em] transition-colors ${
-        active ? 'text-t1' : 'text-t3'
-      } ${onClick ? 'cursor-pointer hover:text-t1' : 'cursor-default'}`}
+        active ? 'text-primary' : 'text-muted'
+      } ${onClick ? 'cursor-pointer hover:text-primary' : 'cursor-default'}`}
     >
       {children}
       {active && <span className="ml-1">↓</span>}
@@ -215,10 +242,10 @@ export function SettingRow({
   children: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-5 border-t border-bd py-[9px]">
+    <div className="flex items-center justify-between gap-5 border-t border-border py-[9px]">
       <div>
-        <div className="text-[12.5px] text-t1">{label}</div>
-        <div className="mt-[3px] text-[11px] leading-snug text-t3">{hint}</div>
+        <div className="text-[12.5px] text-primary">{label}</div>
+        <div className="mt-[3px] text-[11px] leading-snug text-muted">{hint}</div>
       </div>
       {children}
     </div>
@@ -240,7 +267,7 @@ export function SearchInput({
 }) {
   return (
     <div
-      className="flex h-[30px] items-center gap-2 rounded-[7px] border border-bd bg-surf px-2.5 text-t3 focus-within:border-bdhi"
+      className="flex h-[30px] items-center gap-2 rounded-[7px] border border-border bg-surface px-2.5 text-muted focus-within:border-focus"
       style={{ width }}
     >
       <Icon name="search" />
@@ -248,14 +275,14 @@ export function SearchInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-transparent text-xs text-t1 outline-none placeholder:text-t3"
+        className="w-full bg-transparent text-xs text-primary outline-none placeholder:text-muted"
       />
       {value && (
         <button
           type="button"
           onClick={() => onChange('')}
           aria-label="Clear search"
-          className="text-t3 hover:text-t1"
+          className="text-muted hover:text-primary"
         >
           <Icon name="close" size={13} />
         </button>
@@ -285,10 +312,9 @@ export function FilterChips<T extends string>({
             onClick={() => onChange(o.id)}
             className={`flex h-[30px] items-center rounded-[7px] border px-[11px] text-xs transition-colors ${
               active
-                ? 'border-transparent font-medium text-ac'
-                : 'border-bd bg-surf text-t2 hover:border-bdhi'
+                ? 'border-transparent bg-accent-soft font-medium text-accent'
+                : 'border-border bg-surface text-secondary hover:border-border-strong'
             }`}
-            style={active ? { background: 'color-mix(in srgb, var(--c-ac) 14%, transparent)' } : undefined}
           >
             {o.label}
           </button>

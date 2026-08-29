@@ -40,28 +40,28 @@ export function Projects() {
           />
           <div className="mt-5 flex max-w-[640px] flex-col gap-3.5">
             {SAMPLE.map((p) => (
-              <div key={p.name} className="overflow-hidden rounded-[9px] border border-bd bg-surf">
-                <div className="flex items-center gap-2.5 border-b border-bd px-3.5 py-[11px]">
-                  <span className="text-ac">
+              <div key={p.name} className="overflow-hidden rounded-[9px] border border-border bg-surface">
+                <div className="flex items-center gap-2.5 border-b border-border px-3.5 py-[11px]">
+                  <span className="text-accent">
                     <Icon name="folder" />
                   </span>
                   <span className="text-[13px] font-medium">{p.name}</span>
                   <Chip>{p.branch}</Chip>
                   <span className="flex-1" />
-                  <span className="font-mono text-[11px] text-t3">{p.path}</span>
+                  <span className="font-mono text-[11px] text-muted">{p.path}</span>
                 </div>
                 {p.items.map((it, i) => (
                   <div
                     key={it.label}
-                    className="flex h-10 items-center gap-3 border-b border-bd pr-3.5 pl-[22px] last:border-b-0"
+                    className="flex h-10 items-center gap-3 border-b border-border pr-3.5 pl-[22px] last:border-b-0"
                   >
-                    <span className="font-mono text-[11px] text-t3">
+                    <span className="font-mono text-[11px] text-muted">
                       {i === p.items.length - 1 ? '└─' : '├─'}
                     </span>
                     <span className="w-[104px] text-[12.5px]">{it.label}</span>
                     <PortBadge port={it.port} />
                     <span className="flex-1" />
-                    <span className="font-mono text-[11.5px] text-t3">{it.mem}</span>
+                    <span className="font-mono text-[11.5px] text-muted">{it.mem}</span>
                   </div>
                 ))}
               </div>

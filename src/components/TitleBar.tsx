@@ -10,11 +10,11 @@ interface TitleBarProps {
 export function TitleBar({ onOpenPalette, onOpenSettings }: TitleBarProps) {
   return (
     <header
-      className="flex h-[46px] flex-none items-center gap-3 border-b border-bd bg-elev px-3.5"
+      className="flex h-[46px] flex-none items-center gap-3 border-b border-border bg-surface-raised px-3.5"
       data-tauri-drag-region
     >
       <div className="flex items-center gap-[9px]">
-        <span className="text-ac">
+        <span className="text-accent">
           <Logo />
         </span>
         <span className="text-[13.5px] font-semibold tracking-[-0.01em]">LocalDocks</span>
@@ -26,7 +26,7 @@ export function TitleBar({ onOpenPalette, onOpenSettings }: TitleBarProps) {
       <button
         type="button"
         onClick={onOpenPalette}
-        className="flex h-7 items-center gap-2 rounded-md border border-bd bg-surf pr-[9px] pl-2.5 text-t3 transition-colors hover:border-bdhi hover:text-t1"
+        className="flex h-7 items-center gap-2 rounded-md border border-border bg-surface pr-[9px] pl-2.5 text-muted transition-colors hover:border-border-strong hover:text-primary"
       >
         <Icon name="search" />
         <span className="text-xs">Search</span>

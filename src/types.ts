@@ -174,4 +174,15 @@ export type ScreenId =
   | 'wsl'
   | 'settings';
 
-export type Theme = 'system' | 'light' | 'dark';
+/**
+ * The three first-class themes.
+ *
+ * Explicit selection only — there is deliberately no `system` option. A window
+ * that repaints itself because the OS crossed into dark mode mid-scan is a
+ * surprise in a monitoring tool, and `local-dark` is the look the app is
+ * designed around rather than a fallback.
+ *
+ * The value is written to `data-theme` on the document element verbatim, so it
+ * must stay in sync with the blocks in `src/index.css`.
+ */
+export type Theme = 'local-dark' | 'dark' | 'light';

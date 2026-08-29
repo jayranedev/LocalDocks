@@ -89,15 +89,15 @@ export function Services({ snapshot, selectedId, onSelect }: Props) {
           <SearchInput value={query} onChange={setQuery} placeholder="Filter services…" />
           <FilterChips options={FILTERS} value={filter} onChange={setFilter} />
           <span className="flex-1" />
-          <span className="text-[11.5px] text-t3">
+          <span className="text-[11.5px] text-muted">
             {rows.length} of {snapshot.services.length} · sorted by {SORT_LABELS[sort]}
           </span>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 pb-5">
-        <div className="overflow-hidden rounded-[9px] border border-bd bg-surf">
-          <div className="flex h-[34px] items-center gap-[13px] border-b border-bd bg-surfhi px-3.5">
+        <div className="overflow-hidden rounded-[9px] border border-border bg-surface">
+          <div className="flex h-[34px] items-center gap-[13px] border-b border-border bg-surface-hover px-3.5">
             <span className="w-2" />
             <Th width={186} onClick={() => setSort('label')} active={sort === 'label'}>
               SERVICE
@@ -123,7 +123,7 @@ export function Services({ snapshot, selectedId, onSelect }: Props) {
           </div>
 
           {rows.length === 0 ? (
-            <p className="px-3.5 py-10 text-center text-[12.5px] text-t3">
+            <p className="px-3.5 py-10 text-center text-[12.5px] text-muted">
               No services match the current search or filter.
             </p>
           ) : (
@@ -151,32 +151,32 @@ function ServiceRow({
     <button
       type="button"
       onClick={() => onSelect(service.id)}
-      className={`group flex h-[50px] w-full items-center gap-[13px] border-b border-bd px-3.5 text-left transition-colors last:border-b-0 hover:bg-sel ${
-        selected ? 'bg-sel' : ''
+      className={`group flex h-[50px] w-full items-center gap-[13px] border-b border-border px-3.5 text-left transition-colors last:border-b-0 hover:bg-surface-selected ${
+        selected ? 'bg-surface-selected' : ''
       }`}
     >
       <StatusDot />
       <div className="w-[186px]">
         <div className="text-[13px] font-medium">{service.label}</div>
-        <div className="mt-0.5 text-[11px] text-t3">{service.framework ?? service.processName}</div>
+        <div className="mt-0.5 text-[11px] text-muted">{service.framework ?? service.processName}</div>
       </div>
       <div className="flex w-[120px] flex-wrap gap-1">
         {port !== null && <PortBadge port={port} />}
         {isDualStack(service.endpoints) && <Chip tone="quiet">v4+v6</Chip>}
       </div>
       <span className="flex-1" />
-      <span className="w-24 font-mono text-[11.5px] text-t3">{service.processName}</span>
-      <span className="w-[52px] font-mono text-[11.5px] text-t3 tabular-nums">{service.pid}</span>
-      <span className="w-[46px] text-right font-mono text-[11.5px] text-t2 tabular-nums">
+      <span className="w-24 font-mono text-[11.5px] text-muted">{service.processName}</span>
+      <span className="w-[52px] font-mono text-[11.5px] text-muted tabular-nums">{service.pid}</span>
+      <span className="w-[46px] text-right font-mono text-[11.5px] text-secondary tabular-nums">
         {formatCpu(service.cpuPercent)}
       </span>
-      <span className="w-[66px] text-right font-mono text-[11.5px] text-t1 tabular-nums">
+      <span className="w-[66px] text-right font-mono text-[11.5px] text-primary tabular-nums">
         {formatBytes(service.memoryBytes)}
       </span>
-      <span className="w-[62px] text-right font-mono text-[11.5px] text-t3 tabular-nums">
+      <span className="w-[62px] text-right font-mono text-[11.5px] text-muted tabular-nums">
         {formatUptime(service.uptimeSeconds)}
       </span>
-      <span className="w-[18px] text-t3 opacity-0 transition-opacity group-hover:opacity-100">
+      <span className="w-[18px] text-muted opacity-0 transition-opacity group-hover:opacity-100">
         <Icon name="chevron" size={14} />
       </span>
     </button>

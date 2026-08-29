@@ -7,73 +7,184 @@
 @import '@fontsource/ibm-plex-mono/500.css';
 
 /*
-  Design tokens.
+  ============================================================================
+  Design tokens
+  ============================================================================
 
-  Defined as plain CSS custom properties so the theme can be swapped at
-  runtime, then exposed to Tailwind through `@theme inline` — which is what
-  makes `bg-surf`, `text-t2`, `border-bd` work while still resolving through
-  the live variable.
+  Three first-class themes, selected explicitly and never derived from the OS:
 
-  Dark is the base. Light overrides only the values, never the names.
+    local-dark  the signature LocalDocks look. Dark navy surfaces, a cyan
+                accent, a blue focus ring and a violet "not shipped yet" hue.
+                The default.
+    dark        conventional neutral dark. Same semantic roles, no brand hue in
+                the surfaces and a deliberately restrained accent.
+    light       designed as a light interface rather than an inverted dark one:
+                a cool near-white canvas with white cards above it, and darker,
+                more saturated accents so they hold up against white.
+
+  Every value below is a SEMANTIC role, never a shade name. A component asks
+  for `surface-hover` or `danger`, never for "slate 800" and never for a
+  theme name — there is no `theme === 'light'` conditional anywhere in the
+  component tree, which is what lets a fourth theme be a block of CSS rather
+  than an edit to thirty files.
+
+  Contrast is checked, not eyeballed. Every text role clears WCAG AA (4.5:1)
+  against all five surfaces it can land on, in all three themes; accent and
+  status colours clear 3:1 as non-body text; and every border clears its
+  surface well enough to stay visible.
+
+  `:root` carries local-dark so the default theme renders before any
+  JavaScript runs. `[data-theme]` blocks override values only — never names.
 */
-:root {
-  --c-bg: #131519;
-  --c-elev: #181b20;
-  --c-surf: #1c2026;
-  --c-surf-hi: #22272e;
-  --c-bd: #262b33;
-  --c-bd-hi: #333a44;
-  --c-sel: #1e2830;
-  --c-t1: #e6e9ee;
-  --c-t2: #9aa3b0;
-  --c-t3: #6b7481;
-  --c-ac: #3fb6c8;
-  --c-grn: #4ec98a;
-  --c-red: #f0616d;
-  --c-amb: #e6a94a;
-  --c-skel: #20252c;
-  --c-scrim: rgb(9 11 14 / 0.72);
-  --shadow-panel: 0 16px 48px rgb(0 0 0 / 0.55);
+
+/* The default. Also the pre-JS paint. */
+:root,
+[data-theme='local-dark'] {
+  --background: #0A0E15;  /* app canvas */
+  --surface-raised: #0F141D;  /* chrome + floating panels */
+  --surface: #131A25;  /* cards, rows, inputs */
+  --surface-hover: #1B2433;  /* hover */
+  --surface-selected: #152B3B;  /* selected */
+  --border: #1F2A39;  /* hairlines */
+  --border-strong: #31415A;  /* emphasis + hover borders */
+  --text-primary: #E9EFF7;
+  --text-secondary: #9DACC2;
+  --text-muted: #8390A5;
+  --accent: #38C6E4;
+  --accent-alt: #A98BF5;  /* future / unshipped */
+  --accent-contrast: #04121A;  /* text on solid accent */
+  --success: #42D18C;
+  --warning: #EBAE4E;
+  --danger: #FF6B78;
+  --danger-contrast: #1A0507;  /* text on solid danger */
+  --focus: #5A9BFF;  /* keyboard focus ring */
+  --disabled: #4A576B;
+  --skeleton: #18212E;  /* loading placeholders */
+
+  --soft-mix: 15%;
+  --scrim: rgb(3 6 11 / 0.74);
+  --shadow-panel: 0 18px 52px rgb(0 0 0 / 0.62);
+  color-scheme: dark;
+}
+
+[data-theme='dark'] {
+  --background: #0F0F11;  /* app canvas */
+  --surface-raised: #141416;  /* chrome + floating panels */
+  --surface: #191A1C;  /* cards, rows, inputs */
+  --surface-hover: #212225;  /* hover */
+  --surface-selected: #2A2C30;  /* selected */
+  --border: #27282C;  /* hairlines */
+  --border-strong: #3A3C42;  /* emphasis + hover borders */
+  --text-primary: #EDEDF0;
+  --text-secondary: #A6A8AF;
+  --text-muted: #909299;
+  --accent: #5FADC4;
+  --accent-alt: #9990BE;  /* future / unshipped */
+  --accent-contrast: #08161A;  /* text on solid accent */
+  --success: #5CB98A;
+  --warning: #D4A25C;
+  --danger: #E5707B;
+  --danger-contrast: #1A0507;  /* text on solid danger */
+  --focus: #7DA2D9;  /* keyboard focus ring */
+  --disabled: #55575E;
+  --skeleton: #222327;  /* loading placeholders */
+
+  --soft-mix: 14%;
+  --scrim: rgb(6 6 8 / 0.72);
+  --shadow-panel: 0 18px 52px rgb(0 0 0 / 0.58);
   color-scheme: dark;
 }
 
 [data-theme='light'] {
-  --c-bg: #f6f7f9;
-  --c-elev: #ffffff;
-  --c-surf: #ffffff;
-  --c-surf-hi: #f1f3f6;
-  --c-bd: #e3e7ed;
-  --c-bd-hi: #cdd4dd;
-  --c-sel: #e8eef1;
-  --c-t1: #171b21;
-  --c-t2: #59626f;
-  --c-t3: #8a94a1;
-  --c-ac: #1a8fa3;
-  --c-grn: #17945c;
-  --c-red: #cf3b49;
-  --c-amb: #a9741a;
-  --c-skel: #eceff3;
-  --c-scrim: rgb(28 34 42 / 0.34);
-  --shadow-panel: 0 16px 48px rgb(31 41 55 / 0.18);
+  --background: #F3F5F8;  /* app canvas */
+  --surface-raised: #FFFFFF;  /* chrome + floating panels */
+  --surface: #FFFFFF;  /* cards, rows, inputs */
+  --surface-hover: #EBEFF4;  /* hover */
+  --surface-selected: #DEEBF3;  /* selected */
+  --border: #DCE2EA;  /* hairlines */
+  --border-strong: #B9C3D0;  /* emphasis + hover borders */
+  --text-primary: #111721;
+  --text-secondary: #48525F;
+  --text-muted: #5F6A78;
+  --accent: #0A7388;
+  --accent-alt: #6D4DBF;  /* future / unshipped */
+  --accent-contrast: #FFFFFF;  /* text on solid accent */
+  --success: #0B7245;
+  --warning: #8A5B0B;
+  --danger: #C02B39;
+  --danger-contrast: #FFFFFF;  /* text on solid danger */
+  --focus: #1D4ED8;  /* keyboard focus ring */
+  --disabled: #98A2B0;
+  --skeleton: #DAE1EA;  /* loading placeholders */
+
+  --soft-mix: 12%;
+  --scrim: rgb(24 31 42 / 0.32);
+  --shadow-panel: 0 18px 52px rgb(23 32 48 / 0.16);
   color-scheme: light;
 }
 
+/*
+  Soft fills.
+
+  Derived rather than hand-picked so an accent change cannot leave a stale wash
+  behind. `--soft-mix` lets the light theme use a lighter touch, where a 15%
+  wash on white reads much stronger than the same wash on near-black.
+*/
+:root,
+[data-theme] {
+  --accent-soft: color-mix(in srgb, var(--accent) var(--soft-mix), transparent);
+  --accent-alt-soft: color-mix(in srgb, var(--accent-alt) var(--soft-mix), transparent);
+  --success-soft: color-mix(in srgb, var(--success) var(--soft-mix), transparent);
+  --warning-soft: color-mix(in srgb, var(--warning) var(--soft-mix), transparent);
+  --danger-soft: color-mix(in srgb, var(--danger) var(--soft-mix), transparent);
+  --muted-soft: color-mix(in srgb, var(--text-muted) var(--soft-mix), transparent);
+
+  /* Disabled is an opacity, not a colour: it has to work over any surface. */
+  --disabled-opacity: 0.45;
+}
+
+/*
+  Tailwind bindings.
+
+  `inline` keeps the utility pointing at the live custom property, so a
+  `data-theme` swap repaints without regenerating a single class.
+
+  Note on the text scale: `--color-primary/secondary/muted` exist so the markup
+  reads `text-primary`, `text-secondary`, `text-muted` — the names in the token
+  spec. They are TEXT roles. `bg-primary` and `border-muted` will compile and
+  will look wrong; use the surface and border roles instead.
+*/
 @theme inline {
-  --color-bg: var(--c-bg);
-  --color-elev: var(--c-elev);
-  --color-surf: var(--c-surf);
-  --color-surfhi: var(--c-surf-hi);
-  --color-bd: var(--c-bd);
-  --color-bdhi: var(--c-bd-hi);
-  --color-sel: var(--c-sel);
-  --color-t1: var(--c-t1);
-  --color-t2: var(--c-t2);
-  --color-t3: var(--c-t3);
-  --color-ac: var(--c-ac);
-  --color-grn: var(--c-grn);
-  --color-red: var(--c-red);
-  --color-amb: var(--c-amb);
-  --color-skel: var(--c-skel);
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-selected: var(--surface-selected);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-muted: var(--text-muted);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-alt: var(--accent-alt);
+  --color-accent-alt-soft: var(--accent-alt-soft);
+  --color-accent-contrast: var(--accent-contrast);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-contrast: var(--danger-contrast);
+
+  --color-focus: var(--focus);
+  --color-disabled: var(--disabled);
+  --color-skeleton: var(--skeleton);
 
   --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -87,8 +198,8 @@ body,
 
 body {
   margin: 0;
-  background: var(--c-bg);
-  color: var(--c-t1);
+  background: var(--background);
+  color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
@@ -101,17 +212,38 @@ button,
   user-select: none;
 }
 
+/*
+  One focus ring for the whole app, on the `focus` token.
+
+  `:focus-visible` rather than `:focus`, so a mouse click does not leave a ring
+  behind but tabbing through the tables always shows where you are. Applied
+  globally because a per-component ring is the kind of thing that gets added to
+  eleven components and forgotten on the twelfth.
+*/
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Disabled controls, expressed once. */
+.ld-disabled:disabled,
+.ld-disabled[aria-disabled='true'] {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--c-bd-hi);
-  border: 3px solid var(--c-bg);
+  background: var(--border-strong);
+  border: 3px solid var(--background);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--c-t3);
+  background: var(--text-muted);
 }
 ::-webkit-scrollbar-track {
   background: transparent;

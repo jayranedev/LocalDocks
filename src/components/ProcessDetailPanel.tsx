@@ -56,22 +56,22 @@ export function ProcessDetailPanel({ target, onClose, onTerminate }: Props) {
     <>
       <div
         className="ld-fade-in absolute inset-0"
-        style={{ background: 'var(--c-scrim)' }}
+        style={{ background: 'var(--scrim)' }}
         onClick={onClose}
       />
       <aside
-        className="ld-slide-in absolute inset-y-0 right-0 flex w-[396px] flex-col border-l border-bd bg-elev"
+        className="ld-slide-in absolute inset-y-0 right-0 flex w-[396px] flex-col border-l border-border bg-surface-raised"
         style={{ boxShadow: 'var(--shadow-panel)' }}
       >
-        <div className="flex items-start gap-[11px] border-b border-bd px-4 pt-4 pb-[13px]">
+        <div className="flex items-start gap-[11px] border-b border-border px-4 pt-4 pb-[13px]">
           <span className="mt-1.5">
-            <StatusDot tone={target.isService ? 'grn' : 't3'} />
+            <StatusDot tone={target.isService ? 'success' : 'muted'} />
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-[14.5px] font-medium">{target.title}</h2>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {target.badge && <Chip tone="accent">{target.badge}</Chip>}
-              <span className="font-mono text-[11px] text-t3">
+              <span className="font-mono text-[11px] text-muted">
                 {target.processName} · PID {target.pid}
               </span>
             </div>
@@ -85,26 +85,26 @@ export function ProcessDetailPanel({ target, onClose, onTerminate }: Props) {
               <div className="mb-2">
                 <SectionLabel>ENDPOINTS</SectionLabel>
               </div>
-              <div className="mb-[17px] overflow-hidden rounded-lg border border-bd bg-surf">
+              <div className="mb-[17px] overflow-hidden rounded-lg border border-border bg-surface">
                 {target.endpoints.map((e) => {
                   const active =
                     target.highlight?.port === e.port && target.highlight?.address === e.address;
                   return (
                     <div
                       key={`${e.protocol}-${e.address}-${e.port}`}
-                      className={`flex h-[38px] items-center gap-[9px] border-b border-bd px-3 last:border-b-0 ${
-                        active ? 'bg-sel' : ''
+                      className={`flex h-[38px] items-center gap-[9px] border-b border-border px-3 last:border-b-0 ${
+                        active ? 'bg-surface-selected' : ''
                       }`}
                     >
-                      <span className="w-[34px] font-mono text-[11px] text-t3">{e.protocol}</span>
-                      <span className="flex-1 font-mono text-[11.5px] text-t1">{e.address}</span>
+                      <span className="w-[34px] font-mono text-[11px] text-muted">{e.protocol}</span>
+                      <span className="flex-1 font-mono text-[11.5px] text-primary">{e.address}</span>
                       {active && <Chip tone="quiet">selected</Chip>}
-                      <span className="font-mono text-[11.5px] font-medium text-ac">{e.port}</span>
+                      <span className="font-mono text-[11.5px] font-medium text-accent">{e.port}</span>
                     </div>
                   );
                 })}
                 {isDualStack(target.endpoints) && (
-                  <p className="bg-surfhi px-3 py-2 text-[11px] leading-snug text-t3">
+                  <p className="bg-surface-hover px-3 py-2 text-[11px] leading-snug text-muted">
                     Same PID on both stacks — grouped into one service.
                   </p>
                 )}
@@ -117,9 +117,9 @@ export function ProcessDetailPanel({ target, onClose, onTerminate }: Props) {
           </div>
           <div className="mb-[17px] grid grid-cols-2 gap-2">
             {metrics.map((m) => (
-              <div key={m.k} className="rounded-lg border border-bd bg-surf px-[11px] py-[9px]">
-                <div className="text-[10px] tracking-[0.07em] text-t3">{m.k}</div>
-                <div className="mt-1 font-mono text-[13px] text-t1 tabular-nums">{m.v}</div>
+              <div key={m.k} className="rounded-lg border border-border bg-surface px-[11px] py-[9px]">
+                <div className="text-[10px] tracking-[0.07em] text-muted">{m.k}</div>
+                <div className="mt-1 font-mono text-[13px] text-primary tabular-nums">{m.v}</div>
               </div>
             ))}
           </div>
@@ -128,7 +128,7 @@ export function ProcessDetailPanel({ target, onClose, onTerminate }: Props) {
             <SectionLabel>PROCESS</SectionLabel>
             <Chip tone="quiet">{detail ? 'fetched on open' : 'fetching…'}</Chip>
           </div>
-          <div className="mb-[17px] overflow-hidden rounded-lg border border-bd bg-surf">
+          <div className="mb-[17px] overflow-hidden rounded-lg border border-border bg-surface">
             {detail ? (
               <>
                 <Field label="Executable" field={detail.executable} />
@@ -137,20 +137,20 @@ export function ProcessDetailPanel({ target, onClose, onTerminate }: Props) {
               </>
             ) : (
               [0, 1, 2].map((i) => (
-                <div key={i} className="border-b border-bd px-3 py-[9px] last:border-b-0">
-                  <div className="ld-skeleton h-2 w-20 rounded bg-skel" />
-                  <div className="ld-skeleton mt-2 h-2.5 w-full rounded bg-skel" />
+                <div key={i} className="border-b border-border px-3 py-[9px] last:border-b-0">
+                  <div className="ld-skeleton h-2 w-20 rounded bg-skeleton" />
+                  <div className="ld-skeleton mt-2 h-2.5 w-full rounded bg-skeleton" />
                 </div>
               ))
             )}
-            <div className="grid grid-cols-2 border-t border-bd">
-              <div className="border-r border-bd px-3 py-[9px]">
-                <div className="mb-[3px] text-[10.5px] text-t3">Parent PID</div>
-                <div className="font-mono text-[11.5px] text-t2">{target.parentPid}</div>
+            <div className="grid grid-cols-2 border-t border-border">
+              <div className="border-r border-border px-3 py-[9px]">
+                <div className="mb-[3px] text-[10.5px] text-muted">Parent PID</div>
+                <div className="font-mono text-[11.5px] text-secondary">{target.parentPid}</div>
               </div>
               <div className="px-3 py-[9px]">
-                <div className="mb-[3px] text-[10.5px] text-t3">Started</div>
-                <div className="font-mono text-[11.5px] text-t2">{formatClock(target.startedAt)}</div>
+                <div className="mb-[3px] text-[10.5px] text-muted">Started</div>
+                <div className="font-mono text-[11.5px] text-secondary">{formatClock(target.startedAt)}</div>
               </div>
             </div>
           </div>
@@ -178,12 +178,12 @@ export function ProcessDetailPanel({ target, onClose, onTerminate }: Props) {
           </div>
 
           {port === null && target.endpoints.length > 0 && (
-            <p className="mt-2 text-[11px] leading-snug text-t3">
+            <p className="mt-2 text-[11px] leading-snug text-muted">
               No loopback TCP endpoint — nothing to open as a localhost URL.
             </p>
           )}
           {target.endpoints.length === 0 && (
-            <p className="mt-2 text-[11px] leading-snug text-t3">
+            <p className="mt-2 text-[11px] leading-snug text-muted">
               This process holds no listening sockets.
             </p>
           )}
@@ -196,13 +196,13 @@ export function ProcessDetailPanel({ target, onClose, onTerminate }: Props) {
 function Field({ label, field }: { label: string; field: ProcessDetail['executable'] }) {
   const ok = isFieldOk(field);
   return (
-    <div className="border-b border-bd px-3 py-[9px] last:border-b-0">
-      <div className="mb-[3px] flex items-center gap-1.5 text-[10.5px] text-t3">
+    <div className="border-b border-border px-3 py-[9px] last:border-b-0">
+      <div className="mb-[3px] flex items-center gap-1.5 text-[10.5px] text-muted">
         {label}
         {field.kind === 'denied' && <Icon name="lock" size={11} />}
       </div>
       <div
-        className={`font-mono text-[11.5px] leading-snug break-all ${ok ? 'text-t2' : 'text-t3 italic'}`}
+        className={`font-mono text-[11.5px] leading-snug break-all ${ok ? 'text-secondary' : 'text-muted italic'}`}
       >
         {fieldText(field)}
       </div>
