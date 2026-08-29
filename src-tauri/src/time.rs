@@ -50,15 +50,41 @@ pub fn to_iso8601(unix_millis: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}.{millis:03}Z")
 }
 
-/// Current time as an ISO-8601 UTC string.
-pub fn now_iso8601() -> String {
-    let millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+/// Current time as milliseconds since the Unix epoch.
+///
+/// A scan needs the capture instant twice — once as the ISO-8601 `capturedAt`
+/// string and once as a number, to subtract process creation times from. Taking
+/// the reading once and deriving both keeps every `uptimeSeconds` in a snapshot
+/// measured against the same instant.
+pub fn now_unix_millis() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(d) => d.as_millis() as i64,
         // System clock set before 1970. Vanishingly unlikely, but returning a
         // negative offset is more honest than panicking on a clock reading.
         Err(e) => -(e.duration().as_millis() as i64),
-    };
-    to_iso8601(millis)
+    }
+}
+
+/// Number of 100-nanosecond intervals between 1601-01-01 and 1970-01-01.
+///
+/// Windows counts time from the start of the Gregorian calendar's fourth
+/// century-cycle; Unix counts from 1970. This is the gap.
+const FILETIME_EPOCH_OFFSET_100NS: i64 = 116_444_736_000_000_000;
+
+/// Windows `FILETIME` -> Unix milliseconds.
+///
+/// Takes the two halves as plain `u32`s rather than the `FILETIME` struct so
+/// this stays platform-independent and testable without Windows — the pure
+/// layer must not depend on `windows::`.
+///
+/// A zero FILETIME means "not set" and maps to the Unix epoch rather than to a
+/// nonsensical 1601 date.
+pub fn filetime_to_unix_millis(low: u32, high: u32) -> i64 {
+    let ticks = ((high as u64) << 32 | low as u64) as i64;
+    if ticks == 0 {
+        return 0;
+    }
+    (ticks - FILETIME_EPOCH_OFFSET_100NS) / 10_000
 }
 
 #[cfg(test)]
@@ -126,10 +152,56 @@ mod tests {
     }
 
     #[test]
-    fn now_is_parseable_and_current() {
-        let s = now_iso8601();
+    fn the_current_time_renders_as_a_well_formed_timestamp() {
+        // Exercises the path a real scan takes: read the clock once, format it.
+        let s = to_iso8601(now_unix_millis());
         assert_eq!(s.len(), 24, "expected YYYY-MM-DDTHH:MM:SS.mmmZ, got {s}");
         assert!(s.ends_with('Z'));
         assert!(s.starts_with("20"), "expected a 21st-century year, got {s}");
+    }
+
+    #[test]
+    fn filetime_epoch_maps_to_unix_epoch() {
+        // 116444736000000000 is 1970-01-01 expressed as a FILETIME.
+        let ticks: u64 = 116_444_736_000_000_000;
+        let (low, high) = (ticks as u32, (ticks >> 32) as u32);
+        assert_eq!(filetime_to_unix_millis(low, high), 0);
+        assert_eq!(
+            to_iso8601(filetime_to_unix_millis(low, high)),
+            "1970-01-01T00:00:00.000Z"
+        );
+    }
+
+    #[test]
+    fn filetime_zero_is_treated_as_unset() {
+        // Rather than reporting a 1601 date, which would look like real data.
+        assert_eq!(filetime_to_unix_millis(0, 0), 0);
+    }
+
+    #[test]
+    fn filetime_converts_a_known_instant() {
+        // 2026-08-28T09:00:00.000Z
+        let ticks: u64 = 116_444_736_000_000_000 + 1_787_907_600_000 * 10_000;
+        let (low, high) = (ticks as u32, (ticks >> 32) as u32);
+        assert_eq!(
+            to_iso8601(filetime_to_unix_millis(low, high)),
+            "2026-08-28T09:00:00.000Z"
+        );
+    }
+
+    #[test]
+    fn filetime_splits_the_64_bit_value_correctly() {
+        // Guards against swapping low/high, which would silently produce dates
+        // centuries away rather than failing loudly.
+        let ticks: u64 = 116_444_736_000_000_000 + 86_400_000 * 10_000; // 1970-01-02
+        let (low, high) = (ticks as u32, (ticks >> 32) as u32);
+        assert_eq!(
+            to_iso8601(filetime_to_unix_millis(low, high)),
+            "1970-01-02T00:00:00.000Z"
+        );
+        assert_ne!(
+            to_iso8601(filetime_to_unix_millis(high, low)),
+            "1970-01-02T00:00:00.000Z"
+        );
     }
 }

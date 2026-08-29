@@ -23,3 +23,18 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
+
+# Win32 bindings. Windows-gated so the dependency is not even resolved for
+# another target, and feature-gated down to the three namespaces process
+# discovery actually calls into: the crate is enormous and every feature is
+# compile time.
+#
+#   Win32_Foundation                    HANDLE, FILETIME, CloseHandle, error codes
+#   Win32_System_Diagnostics_ToolHelp   CreateToolhelp32Snapshot, Process32*W
+#   Win32_System_Threading              OpenProcess, GetProcessTimes
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Threading",
+] }
