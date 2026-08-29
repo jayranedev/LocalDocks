@@ -315,6 +315,8 @@ function telemetry(): SystemTelemetry {
   const memoryTotalBytes = 16 * 1024 ** 3;
   const memoryUsedBytes = Math.round(drift(10.4, sequence, 0.3) * 1024 ** 3);
   const receive = Math.round(drift(240_000, sequence, 90_000));
+  const read = Math.round(drift(1_400_000, sequence + 1, 900_000));
+  const write = Math.round(drift(600_000, sequence + 4, 400_000));
   const transmit = Math.round(drift(40_000, sequence + 3, 18_000));
 
   return {
@@ -336,6 +338,20 @@ function telemetry(): SystemTelemetry {
           receiveBytesPerSec: receive,
           transmitBytesPerSec: transmit,
           linkSpeedBitsPerSec: 1_000_000_000,
+        },
+      ],
+    },
+    storage: {
+      readBytesPerSec: read,
+      writeBytesPerSec: write,
+      activePercent: Number(Math.min(100, drift(6, sequence + 2, 5)).toFixed(1)),
+      drives: [
+        {
+          number: 0,
+          model: 'PhysicalDrive0',
+          readBytesPerSec: read,
+          writeBytesPerSec: write,
+          activePercent: Number(Math.min(100, drift(6, sequence + 2, 5)).toFixed(1)),
         },
       ],
     },

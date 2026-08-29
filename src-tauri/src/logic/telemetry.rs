@@ -35,7 +35,7 @@
 
 use std::collections::HashMap;
 
-use crate::models::{NetworkInterface, NetworkTelemetry};
+use crate::models::{NetworkInterface, NetworkTelemetry, StorageDrive, StorageTelemetry};
 
 /// One reading of the idle/kernel/user counters, in 100 ns units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -253,6 +253,91 @@ fn sum_measured(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
         any = true;
     }
     any.then_some(total)
+}
+
+// -------------------------------------------------------------------- storage
+
+/// One physical drive's cumulative counters, as the platform layer read them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawDrive {
+    pub number: u32,
+    pub model: String,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
+    /// Cumulative idle time in 100 ns units, straight from `DISK_PERFORMANCE`.
+    pub idle_time_100ns: u64,
+}
+
+/// Previous drive counters, keyed by physical drive number.
+#[derive(Debug, Clone, Default)]
+pub struct StorageTracker {
+    previous: HashMap<u32, (u64, u64, u64)>,
+    at_millis: Option<i64>,
+}
+
+impl StorageTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn observe(&mut self, now_millis: i64, drives: &[RawDrive]) -> StorageTelemetry {
+        let elapsed = self.at_millis.map(|then| now_millis - then);
+        let mut current = HashMap::with_capacity(drives.len());
+        let mut rows = Vec::with_capacity(drives.len());
+
+        for d in drives {
+            let previous = self.previous.get(&d.number).copied();
+            let rate = |before: u64, now: u64| -> Option<f64> { per_second(before, now, elapsed?) };
+
+            rows.push(StorageDrive {
+                number: d.number,
+                model: d.model.clone(),
+                read_bytes_per_sec: previous.and_then(|p| rate(p.0, d.bytes_read)),
+                write_bytes_per_sec: previous.and_then(|p| rate(p.1, d.bytes_written)),
+                active_percent: previous
+                    .zip(elapsed)
+                    .and_then(|(p, e)| active_percent(p.2, d.idle_time_100ns, e)),
+            });
+            current.insert(d.number, (d.bytes_read, d.bytes_written, d.idle_time_100ns));
+        }
+
+        self.previous = current;
+        self.at_millis = Some(now_millis);
+
+        StorageTelemetry {
+            read_bytes_per_sec: sum_measured(rows.iter().map(|r| r.read_bytes_per_sec)),
+            write_bytes_per_sec: sum_measured(rows.iter().map(|r| r.write_bytes_per_sec)),
+            // The busiest drive, not the sum. Two drives at 50% is not a
+            // machine at 100%.
+            active_percent: rows
+                .iter()
+                .filter_map(|r| r.active_percent)
+                .fold(None, |best: Option<f32>, v| {
+                    Some(best.map_or(v, |b| b.max(v)))
+                }),
+            drives: rows,
+        }
+    }
+}
+
+/// Share of the interval the drive was not idle, 0–100.
+///
+/// Derived from idle time because that is the counter Windows maintains, and
+/// because the obvious alternative is wrong: `ReadTime + WriteTime` exceeds the
+/// elapsed time on any device that services requests concurrently, which is
+/// every NVMe drive made this decade. Windows' own `% Disk Time` has exactly
+/// that flaw and routinely reports several hundred percent.
+fn active_percent(previous_idle: u64, now_idle: u64, elapsed_millis: i64) -> Option<f32> {
+    if elapsed_millis <= 0 {
+        return None;
+    }
+    let idle_delta = now_idle.checked_sub(previous_idle)?;
+    let elapsed_100ns = (elapsed_millis as f64) * 10_000.0;
+    let busy = (elapsed_100ns - idle_delta as f64) / elapsed_100ns * 100.0;
+    // Clamped because the idle counter and the wall clock are sampled a moment
+    // apart, so a fully idle drive can report marginally more idle time than
+    // elapsed time.
+    Some(busy.clamp(0.0, 100.0) as f32)
 }
 
 #[cfg(test)]
@@ -558,6 +643,146 @@ mod tests {
         t.observe(1_000, &[iface(7, "Ethernet", 1_000, 0)]);
         let n = t.observe(2_000, &[iface(7, "Ethernet 2", 2_000, 0)]);
         assert_eq!(n.receive_bytes_per_sec, Some(1_000.0));
+    }
+
+    // --------------------------------------------------------------- storage
+
+    fn drive(number: u32, read: u64, write: u64, idle_100ns: u64) -> RawDrive {
+        RawDrive {
+            number,
+            model: format!("PhysicalDrive{number}"),
+            bytes_read: read,
+            bytes_written: write,
+            idle_time_100ns: idle_100ns,
+        }
+    }
+
+    #[test]
+    fn the_first_storage_sample_has_no_rate() {
+        let mut t = StorageTracker::new();
+        let s = t.observe(
+            1_000,
+            &[drive(
+                0,
+                563_000_000_000,
+                390_000_000_000,
+                1_400_000_000_000,
+            )],
+        );
+
+        assert_eq!(s.read_bytes_per_sec, None);
+        assert_eq!(s.write_bytes_per_sec, None);
+        assert_eq!(s.active_percent, None);
+        assert_eq!(s.drives.len(), 1, "the drive is still listed");
+        assert_eq!(s.drives[0].model, "PhysicalDrive0");
+    }
+
+    #[test]
+    fn a_second_storage_sample_produces_rates_and_active_time() {
+        let mut t = StorageTracker::new();
+        t.observe(1_000, &[drive(0, 0, 0, 0)]);
+        // One second later: 2 MB read, 1 MB written, idle for 900 ms of it.
+        let s = t.observe(2_000, &[drive(0, 2_000_000, 1_000_000, 9_000_000)]);
+
+        assert_eq!(s.read_bytes_per_sec, Some(2_000_000.0));
+        assert_eq!(s.write_bytes_per_sec, Some(1_000_000.0));
+        let active = s.active_percent.unwrap();
+        assert!(
+            (active - 10.0).abs() < 0.01,
+            "expected 10% active, got {active}"
+        );
+    }
+
+    #[test]
+    fn a_fully_idle_drive_is_zero_percent_and_a_fully_busy_one_is_one_hundred() {
+        let mut t = StorageTracker::new();
+        t.observe(1_000, &[drive(0, 0, 0, 0)]);
+        // Idle for the whole 1000 ms interval.
+        assert_eq!(
+            t.observe(2_000, &[drive(0, 0, 0, 10_000_000)])
+                .active_percent,
+            Some(0.0)
+        );
+        // Idle for none of the next one.
+        assert_eq!(
+            t.observe(3_000, &[drive(0, 0, 0, 10_000_000)])
+                .active_percent,
+            Some(100.0)
+        );
+    }
+
+    #[test]
+    fn a_drive_reporting_more_idle_time_than_elapsed_is_clamped_not_negative() {
+        // The idle counter and the wall clock are sampled a moment apart.
+        let mut t = StorageTracker::new();
+        t.observe(1_000, &[drive(0, 0, 0, 0)]);
+        let s = t.observe(2_000, &[drive(0, 0, 0, 10_500_000)]);
+        assert_eq!(s.active_percent, Some(0.0));
+    }
+
+    #[test]
+    fn a_storage_counter_reset_reports_nothing_for_that_interval() {
+        let mut t = StorageTracker::new();
+        t.observe(1_000, &[drive(0, 900_000, 900_000, 900_000)]);
+        let s = t.observe(2_000, &[drive(0, 10, 10, 10)]);
+
+        assert_eq!(s.read_bytes_per_sec, None);
+        assert_eq!(s.write_bytes_per_sec, None);
+        assert_eq!(s.active_percent, None);
+    }
+
+    #[test]
+    fn a_drive_appearing_or_disappearing_is_handled_like_an_interface() {
+        let mut t = StorageTracker::new();
+        t.observe(1_000, &[drive(0, 0, 0, 0)]);
+
+        // A USB drive is plugged in carrying a lifetime byte count.
+        let s = t.observe(
+            2_000,
+            &[
+                drive(0, 1_000, 0, 10_000_000),
+                drive(3, 5_000_000_000, 0, 0),
+            ],
+        );
+        assert_eq!(
+            s.read_bytes_per_sec,
+            Some(1_000.0),
+            "the new drive contributes nothing yet"
+        );
+        assert_eq!(s.drives.len(), 2);
+
+        // And unplugged again.
+        let s = t.observe(3_000, &[drive(0, 2_000, 0, 20_000_000)]);
+        assert_eq!(s.drives.len(), 1);
+        assert_eq!(s.read_bytes_per_sec, Some(1_000.0));
+    }
+
+    #[test]
+    fn machine_active_time_is_the_busiest_drive_rather_than_the_sum() {
+        // Two drives at 60% is not a machine at 120%.
+        let mut t = StorageTracker::new();
+        t.observe(1_000, &[drive(0, 0, 0, 0), drive(1, 0, 0, 0)]);
+        let s = t.observe(
+            2_000,
+            &[drive(0, 0, 0, 4_000_000), drive(1, 0, 0, 9_000_000)],
+        );
+
+        let active = s.active_percent.unwrap();
+        assert!(
+            (active - 60.0).abs() < 0.01,
+            "expected the busiest drive, got {active}"
+        );
+        // But the byte rates do sum: two drives reading really is more I/O.
+        assert_eq!(s.read_bytes_per_sec, Some(0.0));
+    }
+
+    #[test]
+    fn zero_elapsed_time_between_storage_samples_reports_nothing() {
+        let mut t = StorageTracker::new();
+        t.observe(1_000, &[drive(0, 0, 0, 0)]);
+        let s = t.observe(1_000, &[drive(0, 9_000, 0, 0)]);
+        assert_eq!(s.read_bytes_per_sec, None);
+        assert_eq!(s.active_percent, None);
     }
 
     #[test]

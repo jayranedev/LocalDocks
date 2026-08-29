@@ -43,7 +43,7 @@ use crate::logic::ports::map_ports;
 use crate::logic::process::map_processes;
 use crate::logic::registry::REGISTRY_VERSION;
 use crate::logic::service::join_services;
-use crate::logic::telemetry::{NetworkTracker, SystemCpuTracker};
+use crate::logic::telemetry::{NetworkTracker, StorageTracker, SystemCpuTracker};
 use crate::models::{ProcessId, ScanTiming, Snapshot, SystemTelemetry};
 use crate::platform;
 use crate::time;
@@ -108,6 +108,8 @@ struct State {
     /// Previous interface octet counters, so throughput is a rate and not a
     /// lifetime total.
     network: NetworkTracker,
+    /// Previous drive byte and idle counters, for the same reason.
+    storage: StorageTracker,
     /// Command lines already read, pruned to live services every tick so it
     /// cannot grow with the machine's uptime.
     command_lines: CommandLines,
@@ -145,6 +147,7 @@ impl Sampler {
                     cpu: CpuTracker::new(logical_cores),
                     system_cpu: SystemCpuTracker::new(),
                     network: NetworkTracker::new(),
+                    storage: StorageTracker::new(),
                     command_lines: CommandLines::new(),
                     sequence: 0,
                     interval,
@@ -465,6 +468,8 @@ fn read_telemetry(state: &mut State, now_millis: i64) -> (SystemTelemetry, f64) 
     // same thing: this machine does not offer it, or it could not be read now.
     let network = platform::windows::network::interfaces()
         .map(|interfaces| state.network.observe(now_millis, &interfaces));
+    let storage = platform::windows::storage::drives()
+        .map(|drives| state.storage.observe(now_millis, &drives));
     let system = SystemTelemetry {
         cpu_percent,
         logical_processors: per_core_percent
@@ -476,6 +481,7 @@ fn read_telemetry(state: &mut State, now_millis: i64) -> (SystemTelemetry, f64) 
         memory_used_bytes: memory.map(|m| m.used_bytes()),
         memory_percent: memory.and_then(|m| m.percent()),
         network,
+        storage,
     };
 
     (system, started.elapsed().as_secs_f64() * 1000.0)
@@ -597,6 +603,7 @@ mod tests {
             cpu: CpuTracker::new(4),
             system_cpu: SystemCpuTracker::new(),
             network: NetworkTracker::new(),
+            storage: StorageTracker::new(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -626,6 +633,7 @@ mod tests {
             cpu: CpuTracker::new(logical_cores()),
             system_cpu: SystemCpuTracker::new(),
             network: NetworkTracker::new(),
+            storage: StorageTracker::new(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -783,6 +791,18 @@ mod tests {
                 "the network tracker did not advance with the tick"
             );
         }
+        if second.system.storage.is_some() {
+            assert!(
+                second
+                    .system
+                    .storage
+                    .as_ref()
+                    .unwrap()
+                    .read_bytes_per_sec
+                    .is_some(),
+                "the storage tracker did not advance with the tick"
+            );
+        }
     }
 
     /// The whole point of one cadence: exactly one thread looks at the machine.
@@ -909,6 +929,7 @@ mod tests {
             cpu: CpuTracker::new(logical_cores()),
             system_cpu: SystemCpuTracker::new(),
             network: NetworkTracker::new(),
+            storage: StorageTracker::new(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),
@@ -925,6 +946,7 @@ mod tests {
             cpu: CpuTracker::new(logical_cores()),
             system_cpu: SystemCpuTracker::new(),
             network: NetworkTracker::new(),
+            storage: StorageTracker::new(),
             command_lines: CommandLines::new(),
             sequence: 0,
             interval: Duration::from_millis(1000),

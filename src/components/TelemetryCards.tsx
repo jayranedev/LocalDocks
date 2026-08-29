@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { NetworkTelemetry, SystemTelemetry } from '../types';
+import type { NetworkTelemetry, StorageTelemetry, SystemTelemetry } from '../types';
 import { formatBytes, formatRate } from '../lib/format';
 import { SectionLabel } from './ui';
 
@@ -40,6 +40,7 @@ export function TelemetryCards({ system }: { system: SystemTelemetry }) {
         <CpuCard system={system} />
         <MemoryCard system={system} />
         <NetworkCard network={system.network} />
+        <StorageCard storage={system.storage} />
       </div>
     </section>
   );
@@ -227,5 +228,31 @@ function Flow({ label, value }: { label: string; value: number | null }) {
         {value === null ? '—' : formatRate(value)}
       </span>
     </div>
+  );
+}
+
+function StorageCard({ storage }: { storage: StorageTelemetry | null }) {
+  if (storage === null) {
+    return <Unavailable label="STORAGE" reason="No physical drive answered a performance query." />;
+  }
+
+  const { readBytesPerSec, writeBytesPerSec, activePercent, drives } = storage;
+
+  return (
+    <Card
+      label="STORAGE"
+      value={activePercent === null ? '—' : pct(activePercent)}
+      sub={
+        activePercent === null
+          ? 'waiting for a second sample'
+          : `busiest of ${drives.length} drive${drives.length === 1 ? '' : 's'}, active time`
+      }
+    >
+      <Meter percent={activePercent} />
+      <div className="mt-2 space-y-1">
+        <Flow label="↓ read" value={readBytesPerSec} />
+        <Flow label="↑ write" value={writeBytesPerSec} />
+      </div>
+    </Card>
   );
 }

@@ -196,9 +196,10 @@ pub struct PortRow {
 /// # Shape
 ///
 /// CPU and memory stay flat because they were already flat and nothing here
-/// requires changing them. Network nests one level, and only because it
-/// genuinely has per-interface detail that the machine-wide figure is derived
-/// from. No level of nesting exists for extensibility alone.
+/// requires changing them. Network and storage nest one level, and only
+/// because each genuinely has per-device detail — interfaces, drives — that the
+/// machine-wide figure is derived from. No level of nesting exists for
+/// extensibility alone.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemTelemetry {
@@ -221,6 +222,8 @@ pub struct SystemTelemetry {
     pub memory_percent: Option<f32>,
     /// `None` if the interface table could not be read at all.
     pub network: Option<NetworkTelemetry>,
+    /// `None` if no physical drive could be opened.
+    pub storage: Option<StorageTelemetry>,
 }
 
 /// TS: `interface NetworkTelemetry`
@@ -258,6 +261,40 @@ pub struct NetworkInterface {
     /// Negotiated receive link speed, bits per second. `None` when the adapter
     /// does not report one.
     pub link_speed_bits_per_sec: Option<u64>,
+}
+
+/// TS: `interface StorageTelemetry`
+///
+/// System-level, deliberately. Per-process disk accounting is not V1 and
+/// `GetProcessIoCounters` could not provide it honestly anyway: it counts file,
+/// network and device I/O together, so it cannot answer "how much is this
+/// touching the disk".
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageTelemetry {
+    pub read_bytes_per_sec: Option<f64>,
+    pub write_bytes_per_sec: Option<f64>,
+    /// The busiest drive's active time, not a sum. Two drives at 50% is not a
+    /// machine at 100%, and adding them would say so.
+    pub active_percent: Option<f32>,
+    pub drives: Vec<StorageDrive>,
+}
+
+/// TS: `interface StorageDrive` — one physical drive.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageDrive {
+    /// The physical drive number, as in `\\.\PhysicalDrive0`.
+    pub number: u32,
+    /// Vendor and product string from the device, or the drive number when the
+    /// identity query is refused.
+    pub model: String,
+    pub read_bytes_per_sec: Option<f64>,
+    pub write_bytes_per_sec: Option<f64>,
+    /// Share of the interval the drive was not idle, 0–100. Derived from idle
+    /// time rather than from busy time, because that is the counter Windows
+    /// actually maintains, and it is what Task Manager calls "Active time".
+    pub active_percent: Option<f32>,
 }
 
 /// TS: `interface ScanTiming` — how long this tick took, in milliseconds.
@@ -430,6 +467,7 @@ mod tests {
             "memoryUsedBytes",
             "memoryPercent",
             "network",
+            "storage",
         ] {
             assert!(
                 v.get(key).is_some(),
@@ -443,6 +481,7 @@ mod tests {
             "memoryUsedBytes",
             "memoryPercent",
             "network",
+            "storage",
         ] {
             assert!(
                 v[key].is_null(),
@@ -474,6 +513,18 @@ mod tests {
                     link_speed_bits_per_sec: Some(1_000_000_000),
                 }],
             }),
+            storage: Some(StorageTelemetry {
+                read_bytes_per_sec: Some(2_048.0),
+                write_bytes_per_sec: Some(512.0),
+                active_percent: Some(3.5),
+                drives: vec![StorageDrive {
+                    number: 0,
+                    model: "PhysicalDrive0".into(),
+                    read_bytes_per_sec: Some(2_048.0),
+                    write_bytes_per_sec: Some(512.0),
+                    active_percent: Some(3.5),
+                }],
+            }),
         };
         let v = serde_json::to_value(&telemetry).unwrap();
 
@@ -485,11 +536,15 @@ mod tests {
             v["network"]["interfaces"][0]["linkSpeedBitsPerSec"],
             1_000_000_000u64
         );
+        assert_eq!(v["storage"]["activePercent"].as_f64().unwrap(), 3.5);
+        assert_eq!(v["storage"]["drives"][0]["readBytesPerSec"], 2_048.0);
+
         // Nothing snake_case anywhere in the tree.
         let text = serde_json::to_string(&telemetry).unwrap();
         for leaked in [
             "receive_bytes_per_sec",
             "per_core_percent",
+            "active_percent",
             "link_speed_bits_per_sec",
         ] {
             assert!(

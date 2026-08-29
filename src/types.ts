@@ -150,9 +150,9 @@ export interface ProcessDetail {
  * computed this tick, almost always because it is the first sample and a rate
  * needs two.
  *
- * CPU and memory are flat because they always were. Network nests one level,
- * and only because it genuinely has per-interface detail the machine-wide
- * figure is derived from.
+ * CPU and memory are flat because they always were. Network and storage nest
+ * one level, and only because each genuinely has per-device detail the
+ * machine-wide figure is derived from.
  */
 export interface SystemTelemetry {
   /** Machine-wide utilisation over the last interval, 0–100. */
@@ -168,6 +168,7 @@ export interface SystemTelemetry {
   memoryUsedBytes: number | null;
   memoryPercent: number | null;
   network: NetworkTelemetry | null;
+  storage: StorageTelemetry | null;
 }
 
 /**
@@ -193,6 +194,25 @@ export interface NetworkInterface {
   receiveBytesPerSec: number | null;
   transmitBytesPerSec: number | null;
   linkSpeedBitsPerSec: number | null;
+}
+
+/** System-level disk activity. Per-process disk accounting is not V1. */
+export interface StorageTelemetry {
+  readBytesPerSec: number | null;
+  writeBytesPerSec: number | null;
+  /** The busiest drive's active time, not a sum across drives. */
+  activePercent: number | null;
+  drives: StorageDrive[];
+}
+
+export interface StorageDrive {
+  /** The physical drive number, as in `\\.\PhysicalDrive0`. */
+  number: number;
+  model: string;
+  readBytesPerSec: number | null;
+  writeBytesPerSec: number | null;
+  /** Share of the interval the drive was not idle, 0–100. */
+  activePercent: number | null;
 }
 
 /** How long one sampler tick took, in milliseconds. */

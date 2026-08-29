@@ -25,6 +25,7 @@ const NO_TELEMETRY: SystemTelemetry = {
   memoryUsedBytes: null,
   memoryPercent: null,
   network: null,
+  storage: null,
 };
 
 const NO_TIMING = {
