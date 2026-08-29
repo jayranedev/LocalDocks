@@ -70,9 +70,14 @@ src-tauri/src/
 │   └── url.rs                 the open_external allowlist
 ├── platform/windows/          every `use windows::…`, behind #[cfg]
 │   ├── control.rs             detail, terminate, ShellExecuteW, command lines
+│   ├── gpu.rs                 PDH engine and memory counters, DXGI identity
+│   ├── network.rs             GetIfTable2
+│   ├── pdh.rs                 the shared PDH query wrapper
 │   ├── ports.rs               the four extended-table calls
 │   ├── process.rs             Toolhelp + OpenProcess
-│   └── system.rs              GetSystemTimes, per-core, GlobalMemoryStatusEx
+│   ├── storage.rs             IOCTL_DISK_PERFORMANCE per physical drive
+│   ├── system.rs              GetSystemTimes, per-core, GlobalMemoryStatusEx
+│   └── thermal.rs             PDH ACPI thermal zones
 ├── models.rs                  serde types shared with TypeScript
 └── errors.rs
 ```
@@ -202,6 +207,51 @@ Every reading is independently optional. A failed CPU query must not blank the
 memory figures, and neither may take a tick down — telemetry is decoration on a
 process dashboard. ROADMAP.md records what is deferred and why; none of it is
 fabricated to fill a slot.
+
+### V1 — network, storage, GPU and thermal
+
+All four were chosen after measuring the candidates **unelevated on a real
+machine**, not from documentation alone.
+
+| Need | API / provider | Elevation | Measured cost | Status |
+|---|---|---|---|---|
+| Network throughput | `GetIfTable2`, `MIB_IF_ROW2.InOctets` / `OutOctets` | none | 0.90 ms, 50 interfaces | **IMPLEMENTED** |
+| Storage throughput and active time | `DeviceIoControl(IOCTL_DISK_PERFORMANCE)` on `\\.\PhysicalDriveN` | none | 0.11 ms per drive, 0.05 ms to sweep 0–15 | **IMPLEMENTED** |
+| GPU utilisation | PDH `\GPU Engine(*)\Utilization Percentage` | none | 0.50 ms, 599 instances | **IMPLEMENTED** |
+| GPU memory | PDH `\GPU Adapter Memory(*)\Dedicated Usage` / `Shared Usage` | none | 0.008 ms | **IMPLEMENTED** |
+| GPU identity | DXGI `EnumAdapters1` → `DXGI_ADAPTER_DESC1` | none | once, cached | **IMPLEMENTED** |
+| ACPI thermal zones | PDH `\Thermal Zone Information(*)\Temperature` | none | 0.09 ms, 3 zones | **IMPLEMENTED** |
+
+**Rejected, with the reason each was rejected:**
+
+| Candidate | Why not |
+|---|---|
+| WMI `MSAcpi_ThermalZoneTemperature` | **Measured returning access denied unelevated.** The obvious route to a temperature, and it needs administrator rights |
+| `D3DKMTQueryStatistics` | Undocumented gdi32 internals |
+| NVML, AMD ADL | Vendor SDKs, and the development machine has one adapter of each vendor |
+| `IDXGIAdapter3::QueryVideoMemoryInfo` | Reports the *calling process's* memory budget, so it would show LocalDocks' own usage as the GPU's |
+| `GetProcessIoCounters` for disk | Counts file, network and device I/O in one number |
+| ETW `Microsoft-Windows-Kernel-Network` | Starting a session needs elevation |
+| PDH `\PhysicalDisk` counters | Would work, but returns rates already differenced rather than the cumulative counters the delta model uses, costs a held-open query, and carries the counter-name localisation problem |
+
+**Four things that are easy to get wrong, each with a test:**
+
+1. **`PdhAddEnglishCounterW`, not `PdhAddCounterW`.** Counter names are
+   localised. A hard-coded `\GPU Engine(*)\Utilization Percentage` fails on a
+   German or Japanese Windows through the localised call.
+2. **A zero-access handle opens a physical drive.** `CreateFileW` with a desired
+   access of `0` can issue `IOCTL_DISK_PERFORMANCE` but cannot read a byte of
+   the device, which is exactly why an unelevated user is permitted to open it.
+   Asking for `GENERIC_READ` would demand administrator rights.
+3. **Disk active time comes from idle time.** `ReadTime + WriteTime` exceeds the
+   elapsed time on any device that services requests concurrently — every NVMe
+   drive made this decade — which is why Windows' own `% Disk Time` reports
+   several hundred percent. `DISK_PERFORMANCE`'s time fields are in 100 ns
+   units, which the reference page does not state, so a test asserts it against
+   a measured interval rather than assuming it.
+4. **GPU engines are summed within a type and maximised across types.** 3D,
+   Copy and Video Decode are separate hardware queues that run concurrently, so
+   adding them reports well over 100% for a machine doing one thing.
 
 ### V1 — actions
 

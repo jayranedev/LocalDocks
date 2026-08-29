@@ -79,11 +79,12 @@ The goal is a correct foundation, not a complete product.
 | **Process details — working directory** | Needs a PEB walk with `PROCESS_VM_READ`; renders `unavailable` | **DEFERRED** |
 | **Safe termination** | Force terminate, refused on identity mismatch | **IMPLEMENTED** |
 | **Open external** | `http`/`https` only, validated before the OS sees it | **IMPLEMENTED** |
-| **Developer / System mode** | One global switch; presentation only, never collection | **IMPLEMENTED** |
+| **Developer / System mode** | One global switch; presentation only, never collection. Narrows services, processes and ports from one classification; never alters telemetry | **IMPLEMENTED** |
+| **Developer classification** | Central versioned registry, deterministic classifier, Developer / System / Unknown with a reason on every verdict | **IMPLEMENTED** |
 | **Themes** | Local Dark (default), Dark, Light — semantic tokens, AA verified | **IMPLEMENTED** |
 | **State** | Live snapshot model, loading / empty / error, stale-snapshot on failure | **IMPLEMENTED** |
 | **Settings** | Theme, refresh interval and mode, persisted | **IMPLEMENTED** |
-| **System telemetry** | See the table below | **IN PROGRESS** |
+| **System telemetry** | CPU, per-core CPU, system memory, network, storage, GPU, ACPI thermal zones — see the table below | **IMPLEMENTED** |
 
 ### V1 system telemetry
 
@@ -92,24 +93,41 @@ list. That widens V1's telemetry beyond per-process resources. Nothing here may
 be displayed as a fabricated value: a metric Windows does not expose reliably
 renders as an explicit unavailable state, never as a plausible zero.
 
-| Metric | Status | Note |
-|---|---|---|
-| Per-process CPU % | **IMPLEMENTED** | Δ(kernel+user) / Δwall / logical cores |
-| Per-process memory | **IMPLEMENTED** | Working set, via `GetProcessMemoryInfo` |
-| Per-process threads, uptime | **IMPLEMENTED** | From the Toolhelp snapshot and creation time |
-| Aggregate CPU/memory across services | **IMPLEMENTED** | Summed in the Overview from real per-process values |
-| Total system CPU | **IMPLEMENTED** | `GetSystemTimes`; same delta shape as per-process. `null` on the first tick — a rate needs two samples, and a lifetime-since-boot average presented beside a live readout would be believed |
-| Per logical processor | **IMPLEMENTED** | `NtQuerySystemInformation(SystemProcessorPerformanceInformation)`, one bar per core in the Overview. `null` if the processor count changes between ticks rather than mispairing cores |
-| System memory | **IMPLEMENTED** | `GlobalMemoryStatusEx`. Used = total − *available*, which counts the reclaimable cache, because that is what Windows itself reports as usable |
-| Network activity | **DEFERRED** | `GetIfTable2` gives per-adapter byte counters, so a machine-wide rate is reachable. Per-*process* attribution — the number worth showing beside a service — needs an ETW session (`Microsoft-Windows-Kernel-Network`), and starting one needs elevation. A machine-wide rate on a per-service dashboard invites being read as the service's |
-| Storage activity | **DEFERRED** | `GetProcessIoCounters` is cheap and per-process, but counts file, network *and* device I/O together, so it cannot answer "how much is this touching the disk". Reporting it as disk activity would be wrong in a way the user could not detect |
-| GPU metrics | **DEFERRED** | Reachable only through vendor SDKs (NVML, ADL) or the performance-counter path Task Manager uses. Neither is a Win32 call; shipping an NVIDIA dependency to read one number is not the V1 trade |
-| Thermal | **DEFERRED** | `MSAcpi_ThermalZoneTemperature` is unimplemented on most consumer hardware and returns a fixed value where it exists. A field that is wrong on most machines is worse than no field |
+| Metric | Status | API / provider | Note |
+|---|---|---|---|
+| Per-process CPU % | **IMPLEMENTED** | `GetProcessTimes` | Δ(kernel+user) / Δwall / logical cores |
+| Per-process memory | **IMPLEMENTED** | `GetProcessMemoryInfo` | Working set — the column Task Manager calls "Memory" |
+| Per-process threads, uptime | **IMPLEMENTED** | Toolhelp snapshot, creation time | |
+| Aggregate CPU/memory across services | **IMPLEMENTED** | summed in the Overview | Labelled SERVICE MEMORY, never mixed with system memory |
+| Total system CPU | **IMPLEMENTED** | `GetSystemTimes` | `null` on the first tick — a rate needs two samples, and a lifetime-since-boot average beside a live readout would be believed |
+| Per logical processor | **IMPLEMENTED** | `NtQuerySystemInformation(SystemProcessorPerformanceInformation)`, class 8 | One bar per core. `null` if the processor count changes between ticks rather than mispairing cores |
+| System memory | **IMPLEMENTED** | `GlobalMemoryStatusEx` | Used = total − *available*; available counts the reclaimable cache, because that is what Windows reports as usable |
+| Network throughput | **IMPLEMENTED** | `GetIfTable2` (IpHelper) | Machine-wide receive and transmit, per interface and summed. Unelevated, 0.90 ms. Operational non-loopback non-filter interfaces only |
+| Storage throughput and active time | **IMPLEMENTED** | `DeviceIoControl(IOCTL_DISK_PERFORMANCE)` on `\\.\PhysicalDriveN` | Read, write and active time per physical drive. Unelevated with a zero-access handle, 0.11 ms. Active time from idle time, because `ReadTime + WriteTime` exceeds elapsed on any concurrent device |
+| GPU utilisation and memory | **IMPLEMENTED** | PDH `\GPU Engine`, `\GPU Adapter Memory`; DXGI `EnumAdapters1` for identity | Unelevated, 0.50 ms. **Needs Windows 10 1709+ and a WDDM 2.0 driver** — absent in VMs and on older drivers, where the card reads unavailable |
+| ACPI thermal zones | **IMPLEMENTED** | PDH `\Thermal Zone Information` | Unelevated, 0.09 ms. **Hardware-dependent**: many machines expose none, zone names are OEM-defined, and a zone may report a stub value |
+| CPU / GPU package temperature | **DEFERRED** | — | Requires reading model-specific registers, which requires a kernel driver. LocalDocks does not ship one and will not for a readout. `MSAcpi_ThermalZoneTemperature` was measured returning **access denied** unelevated |
+| Per-process network attribution | **DEFERRED** | — | The number worth showing beside a service — *which* server is talking. Needs an ETW session on `Microsoft-Windows-Kernel-Network`, and starting one needs elevation |
+| Per-process disk attribution | **DEFERRED** | — | `GetProcessIoCounters` is cheap and per-process but counts file, network *and* device I/O together, so it cannot answer "how much is this touching the disk" |
+| Per-process GPU attribution | **DEFERRED** | — | The counters carry a PID, so it is reachable. Deferred on presentation rather than access: it needs a per-process column the V1 tables do not have |
+| Resource history | **DEFERRED** | — | V2 (§ 2.4). V1 keeps only the single previous sample each rate needs |
 
-The four deferred rows are deferred on evidence, not appetite. Each is
-revisited when there is a way to report it that is honest at a glance. All four
-are present in the IPC contract as `null`, not absent from it — the day one
-becomes measurable, nothing in the frontend changes shape.
+Every deferred row is deferred on evidence, not appetite, and each names the
+specific obstacle rather than a general one. Each is revisited when there is a
+way to report it that is honest at a glance.
+
+**The rule that governs all of it.** `null` means *not measured*. It never means
+*measured as zero*. A metric this machine does not provide renders as an
+explicit unavailable state naming the reason — "No GPU performance counters on
+this machine. They need Windows 10 1709 or later and a WDDM 2.0 driver" — never
+as `0%`, `0 MB/s` or `0 °C`. A reader cannot tell a failed provider from an idle
+machine, and the failure is the likelier explanation for a flat zero.
+
+**One cadence.** Every metric above is sampled by the existing Rust sampler, in
+the same tick as the process and socket scans. There is no second timer, no
+per-metric poller and nothing in React that reaches Windows. Measured on the
+development machine at a 1000 ms interval: **21 ms per tick, of which processes
+14.9 ms, sockets 0.4 ms and all telemetry 3.7 ms.**
 
 ### V1 Developer classification
 
@@ -144,6 +162,29 @@ be — that is what the `unknown` verdict is for. Known gaps, all deliberate:
 - **The registry will need entries.** Adding one is a code change and a version
   bump, deliberately — it is a decision, not configuration.
 
+### V1 completion criteria
+
+V1 is complete when all of the following hold. Each is a statement that can be
+checked, not a feeling about readiness.
+
+| Criterion | State |
+|---|---|
+| Every process the user owns is discoverable, with real CPU, memory, threads and uptime | **MET** |
+| Every listening socket the user owns is discoverable across TCP v4, TCP v6 and UDP | **MET** |
+| Services are derived from observation, and classified with an explainable reason | **MET** |
+| Every destructive action verifies process identity first | **MET** |
+| The app never elevates and never requests a privilege it does not need | **MET** |
+| CPU, memory, network, storage, GPU and thermal are each either measured, or explicitly unavailable with a stated reason | **MET** |
+| No metric is ever displayed as a fabricated value | **MET** |
+| One sampler owns every measurement; nothing else polls Windows | **MET** |
+| All three themes pass AA contrast on every surface | **MET** |
+| The documentation marks nothing implemented that is mocked or placeholder | **MET** |
+| Release hardening: packaging, signing, first-run behaviour, crash reporting, the open-source audit | **NOT MET** |
+
+The functional scope of V1 is therefore complete. **V1 is not releasable**: the
+last row is the remaining work, and § Known V1 polish debt lists what is
+tracked and deliberately not blocking.
+
 ### Explicitly not in V1
 
 Docker · WSL · logs · project detection · start/stop/restart · resource history
@@ -162,6 +203,11 @@ Tracked, deliberately not blocking:
 - System telemetry rows marked **DEFERRED** above
 - Developer Registry coverage gaps (see § V1 Developer classification)
 - No in-app way to report or override a classification
+- Telemetry has been validated on one machine; the unavailable paths for GPU
+  and thermal are covered by tests but have not been seen on hardware that
+  lacks them
+- Drive identity is the physical drive number, not the vendor and product
+  string, which needs a second IOCTL and a variable-length buffer
 
 ---
 

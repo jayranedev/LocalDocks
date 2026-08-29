@@ -276,6 +276,88 @@ version of the tables rather than to "the app".
 
 ---
 
+### 4d · One cadence owns every measurement
+
+**IMPLEMENTED.** Process discovery, socket discovery and all six telemetry
+metrics are collected by the same sampler tick.
+
+The alternative — a timer per metric, or a React `useEffect` polling the
+backend — fails in a way that is invisible rather than loud. A snapshot whose
+process list and CPU figure were taken two seconds apart still renders
+perfectly; nothing in the contract shows that the two halves describe different
+moments. One cadence makes that unrepresentable: `capturedAt` is the moment,
+and everything in the snapshot belongs to it.
+
+It also means the cost is one number rather than six, and there is exactly one
+thing in the process deciding when to look at the machine. `ScanTiming` is
+published in every snapshot — total, processes, sockets, telemetry — so a
+provider that becomes slow on some other machine is visible in the UI rather
+than only in a debug build.
+
+Measured on the development machine at a 1000 ms interval:
+
+| Stage | Cost |
+|---|---|
+| Process scan (~240 processes) | 14.9 ms |
+| Socket scan | 0.4 ms |
+| **All six telemetry providers** | **3.7 ms** |
+| Total tick | 21 ms |
+
+The PDH queries are the reason telemetry is that cheap: a query is opened once
+and collected each tick, rather than opened and closed inside the tick. A rate
+counter needs two collections to produce a value, so the per-tick open would
+also have reported nothing forever.
+
+---
+
+### 4e · Unavailable is a value, not an error
+
+**IMPLEMENTED.** Every telemetry reading is optional, and **`null` means "not
+measured", never "measured as zero"**.
+
+This is the same principle as `FieldState` for tier-2 process fields
+(docs/BACKEND.md, "AccessDenied is a value, not an error"), applied to hardware.
+It matters more here, because a plausible number is indistinguishable from a
+real one. A GPU card reading `0%` on a machine with no GPU counters is not a
+smaller error than a wrong number — it is the *same* error, and it is the one a
+reader cannot detect.
+
+So the contract distinguishes three things:
+
+| State | Meaning | Renders as |
+|---|---|---|
+| A number | measured | the number |
+| `null` on a rate inside a present section | the provider works, this tick had no second sample | "waiting for a second sample" |
+| `null` on a whole section | this machine has no such provider | a named reason |
+
+The named reason is required rather than optional in the UI's `Unavailable`
+component, because "Unavailable" alone reads as a bug in the app. "No GPU
+performance counters on this machine. They need Windows 10 1709 or later and a
+WDDM 2.0 driver" is a fact the reader can act on.
+
+Two consequences worth stating, because both were defects caught during
+implementation rather than principles applied in advance:
+
+* **A formatter can fabricate a zero.** `formatBytes` was written for process
+  memory, which is never smaller than a megabyte, so it has no kilobyte step —
+  and a real 200 KB/s network rate rendered as "0 MB/s". The value was measured
+  and the *formatter* destroyed it. `formatRate` steps down to bytes and rounds
+  a measured rate up rather than to zero, so only a genuine zero prints as zero.
+* **A counter instance is not a device.** Windows keeps GPU counter instances
+  for adapters DXGI does not enumerate — the Basic Render Driver, remote-session
+  adapters, stale entries — four LUIDs against two real cards on the development
+  machine. An adapter survives if DXGI described it (a real card, however idle)
+  or if its counters show something. Only rows that are both anonymous and
+  entirely zero are dropped, because by definition they carry no measurement.
+
+Failure is graded, not uniform. A process or socket scan that fails is
+**critical**: there is no snapshot to publish, so the previous one stands behind
+a warning, which is the existing `services:error` behaviour. A telemetry
+provider that fails is **optional**: one card reads unavailable beside a
+snapshot that is otherwise complete.
+
+---
+
 ### 5 · Endpoints are plural, and identity is not the port
 
 A dev server routinely binds `127.0.0.1:5173`, `[::1]:5173` and sometimes
