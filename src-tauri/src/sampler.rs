@@ -39,6 +39,7 @@ use crate::errors::SystemError;
 use crate::logic::cpu::CpuTracker;
 use crate::logic::ports::map_ports;
 use crate::logic::process::map_processes;
+use crate::logic::service::join_services;
 use crate::models::Snapshot;
 use crate::platform;
 use crate::time;
@@ -265,7 +266,7 @@ fn advance(
 ) -> Snapshot {
     state.sequence += 1;
 
-    let mapping = map_processes(raw, captured_at_millis, &mut state.cpu);
+    let mut mapping = map_processes(raw, captured_at_millis, &mut state.cpu);
 
     if mapping.access_denied > 0 || mapping.exited_during_scan > 0 {
         // Excluded processes are reported rather than counted silently. The
@@ -280,20 +281,27 @@ fn advance(
         );
     }
 
-    // Attribution uses this tick's own process data, so a socket is never
-    // matched against a process list from a different moment.
-    let ports = map_ports(endpoints, raw, &mapping.rows);
+    // The join, and then everything that points at it. All three views are
+    // built from one tick's data, so a service, its process row and its port
+    // rows can never describe different moments.
+    let join = join_services(&mapping.rows, endpoints);
+
+    // `isService` is decided here, by the service model — never in the
+    // frontend, and never by guessing from a process name.
+    for row in &mut mapping.rows {
+        row.is_service = join.is_service(&row.id);
+    }
+
+    let ports = map_ports(endpoints, raw, &mapping.rows, join.labels());
 
     let snapshot = Snapshot {
         sequence: state.sequence,
         captured_at: time::to_iso8601(captured_at_millis),
-        // Joining processes and endpoints into Services is the next milestone
-        // (docs/ROADMAP.md § 2.2). Empty is the truthful representation of work
-        // that has not been done, and `conflicts` stays unknown rather than a
-        // confident zero.
-        services: Vec::new(),
+        services: join.services,
         processes: mapping.rows,
         ports,
+        // Conflict detection is a later milestone (docs/ROADMAP.md). `None`
+        // renders as "—" rather than as a confident zero.
         conflicts: None,
     };
 
@@ -497,18 +505,50 @@ mod tests {
     }
 
     #[test]
-    fn this_milestone_leaves_services_and_conflicts_alone() {
-        // Service joining is the next milestone. Empty is the truthful
-        // representation of work that has not been done, and `conflicts` stays
-        // unknown rather than a confident zero. Ports are now real.
+    fn one_tick_produces_processes_ports_and_services_that_agree() {
+        // All three views come out of the same tick, so they must describe the
+        // same moment: the service, the process it was built from, and the
+        // port row pointing back at it.
         let mut s = state();
         let snapshot = advance(&mut s, T0, &[raw(1, T0 - 1000)], &[socket(5173, 1)]);
 
-        assert!(snapshot.services.is_empty());
-        assert!(snapshot.conflicts.is_none());
-        assert!(!snapshot.processes.is_empty());
+        assert_eq!(snapshot.processes.len(), 1);
         assert_eq!(snapshot.ports.len(), 1);
-        assert!(snapshot.ports.iter().all(|p| p.service_label.is_none()));
+        assert_eq!(snapshot.services.len(), 1);
+
+        let process = &snapshot.processes[0];
+        let service = &snapshot.services[0];
+        let port = &snapshot.ports[0];
+
+        assert_eq!(service.id, process.id, "identity is the process identity");
+        assert!(process.is_service, "the process must be marked");
+        assert_eq!(port.process_id.as_ref(), Some(&process.id));
+        assert_eq!(port.service_label.as_ref(), Some(&service.label));
+        assert_eq!(service.endpoints.len(), 1);
+        assert_eq!(service.endpoints[0].port, 5173);
+
+        // Conflict detection is still a later milestone.
+        assert!(snapshot.conflicts.is_none());
+    }
+
+    #[test]
+    fn a_process_with_no_sockets_is_not_marked_as_a_service() {
+        let mut s = state();
+        let snapshot = advance(
+            &mut s,
+            T0,
+            &[raw(1, T0 - 1000), raw(2, T0 - 1000)],
+            &[socket(5173, 1)],
+        );
+
+        let marked: Vec<_> = snapshot
+            .processes
+            .iter()
+            .filter(|p| p.is_service)
+            .map(|p| p.pid)
+            .collect();
+        assert_eq!(marked, vec![1], "only the socket holder is a service");
+        assert_eq!(snapshot.services.len(), 1);
     }
 
     #[test]
@@ -671,14 +711,53 @@ mod tests {
         for (_, s) in &snapshots {
             assert!(!s.processes.is_empty(), "a live machine has processes");
             assert!(has_unique_identities(s), "duplicate identity in a snapshot");
-            assert!(
-                s.services.is_empty(),
-                "service joining is the next milestone"
-            );
+            // Every service is one of this snapshot's own processes, holds at
+            // least one endpoint, and is marked on the process row it came
+            // from. Asserted as invariants, never as counts — what happens to
+            // be running is not a fact a test may assume.
+            let mut service_ids = HashSet::new();
+            for svc in &s.services {
+                assert!(
+                    service_ids.insert(&svc.id),
+                    "the same process became a service twice: {}",
+                    svc.id
+                );
+                let process = s
+                    .processes
+                    .iter()
+                    .find(|p| p.id == svc.id)
+                    .unwrap_or_else(|| panic!("service {} has no process", svc.id));
+                assert!(process.is_service, "process {} not marked", process.pid);
+                assert_eq!(svc.pid, process.pid);
+                assert!(!svc.endpoints.is_empty(), "a service holds sockets");
+                assert!(svc.framework.is_none(), "framework detection is V2");
+                assert!(
+                    svc.endpoints.iter().any(|e| e.port >= 1024),
+                    "a service needs a non-system port"
+                );
+            }
+            for p in s.processes.iter().filter(|p| p.is_service) {
+                assert!(
+                    service_ids.contains(&p.id),
+                    "process {} is marked but produced no service",
+                    p.pid
+                );
+            }
             for p in &s.ports {
                 assert!(p.port > 0, "port 0 is not a bound port");
                 assert!(!p.address.is_empty(), "every row carries an address");
-                assert!(p.service_label.is_none(), "labels arrive with Services");
+                // A label only ever appears beside an identity, and only when
+                // that identity really is a service.
+                if p.service_label.is_some() {
+                    let id = p
+                        .process_id
+                        .as_ref()
+                        .expect("a labelled row must carry an identity");
+                    assert!(
+                        s.services.iter().any(|svc| &svc.id == id),
+                        "label on a row whose process is not a service"
+                    );
+                }
             }
             let mut sockets = HashSet::new();
             for p in &s.ports {

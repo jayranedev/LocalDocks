@@ -8,3 +8,4 @@
 pub mod cpu;
 pub mod ports;
 pub mod process;
+pub mod service;

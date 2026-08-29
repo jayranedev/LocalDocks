@@ -104,9 +104,11 @@ pub fn map_processes(
             // reason the TypeScript union does, and stays unreachable until
             // something can actually observe it.
             status: ProcessStatus::Running,
-            // Truthful by construction: the field means "also appears in
-            // `services`", and `services` is empty until service joining lands
-            // (docs/ROADMAP.md milestone 5).
+            // Provisional. The service model is the only thing allowed to
+            // decide this, and it cannot run until the sockets have been
+            // scanned, so the sampler overwrites it later in the same tick
+            // (`sampler::advance`). `false` is the honest default: nothing has
+            // yet found a reason to call this process a service.
             is_service: false,
         });
     }
