@@ -76,3 +76,35 @@ export function fieldText(field: FieldState<string>): string {
 export function isFieldOk(field: FieldState<string>): boolean {
   return field.kind === 'ok';
 }
+
+/**
+ * A throughput, in the largest unit that does not round it away.
+ *
+ * `formatBytes` exists for process memory, which is never smaller than a
+ * megabyte, so it has no kilobyte step — and a 200 KB/s network rate put
+ * through it renders as "0 MB". That is a fabricated zero: the value was
+ * measured, and the formatter destroyed it. A reader cannot tell it from an
+ * idle link.
+ *
+ * So this steps down to bytes, and a measured rate below one whole unit rounds
+ * *up* rather than to zero. Only a genuine zero prints as zero.
+ */
+export function formatRate(bytesPerSec: number): string {
+  const value = Math.max(0, bytesPerSec);
+  if (value === 0) return '0 B/s';
+
+  const KB = 1024;
+  const MB = KB * 1024;
+  const GB = MB * 1024;
+
+  if (value < KB) return `${Math.max(1, Math.round(value))} B/s`;
+  if (value < MB) return `${round(value / KB)} KB/s`;
+  if (value < GB) return `${round(value / MB)} MB/s`;
+  return `${round(value / GB)} GB/s`;
+}
+
+/** One decimal below ten, none above — so the column stays a similar width. */
+function round(value: number): string {
+  if (value < 10) return Math.max(0.1, Math.round(value * 10) / 10).toFixed(1);
+  return String(Math.max(1, Math.round(value)));
+}

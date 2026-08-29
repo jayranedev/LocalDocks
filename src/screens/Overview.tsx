@@ -3,7 +3,7 @@ import { formatBytes, formatCpu, isDualStack, primaryPort } from '../lib/format'
 import type { SnapshotView } from '../lib/view';
 import { MODE_HINTS, MODE_LABELS, RELEVANCE_LABELS } from '../lib/view';
 import { Icon } from '../components/Icon';
-import { SystemStrip } from '../components/SystemStrip';
+import { TelemetryCards } from '../components/TelemetryCards';
 import { Chip, PageHeader, PortBadge, SectionLabel, StatTile, StatusDot } from '../components/ui';
 
 interface Props {
@@ -45,6 +45,17 @@ export function Overview({ snapshot, view, intervalMs, onSelect }: Props) {
         <span>{MODE_HINTS[view.mode]}</span>
         <span>·</span>
         <span className="font-mono">sampler {intervalMs} ms</span>
+        <span>·</span>
+        {/* What the tick actually cost. Published rather than logged because
+            the price of a monitoring tool is the user's business, and because
+            a telemetry provider that becomes slow on some other machine should
+            be visible without a debug build. */}
+        <span
+          className="font-mono tabular-nums"
+          title={`processes ${snapshot.timing.processesMillis.toFixed(1)} ms · sockets ${snapshot.timing.portsMillis.toFixed(1)} ms · telemetry ${snapshot.timing.telemetryMillis.toFixed(1)} ms`}
+        >
+          tick {snapshot.timing.totalMillis.toFixed(0)} ms
+        </span>
         <span>·</span>
         <span className="tabular-nums">
           {services.length} of {view.total.services} services
@@ -105,7 +116,7 @@ export function Overview({ snapshot, view, intervalMs, onSelect }: Props) {
         ))}
       </div>
 
-      <SystemStrip system={snapshot.system} />
+      <TelemetryCards system={snapshot.system} />
     </div>
   );
 }

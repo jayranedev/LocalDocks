@@ -298,6 +298,7 @@ export function buildSnapshot(): Snapshot {
     // null, not 0 — the UI must not claim "no conflicts" on no evidence.
     conflicts: null,
     system: telemetry(),
+    timing: { totalMillis: 21.4, processesMillis: 18.1, portsMillis: 1.6, telemetryMillis: 1.7 },
     registryVersion: 1,
   };
 }
@@ -305,9 +306,6 @@ export function buildSnapshot(): Snapshot {
 /**
  * Machine-wide load, drifting the way the real readings do.
  *
- * The unmeasured fields the real backend reports as null — network, disk, GPU,
- * temperature — are simply absent from the contract, so there is nothing to
- * fake here. That is the point.
  */
 function telemetry(): SystemTelemetry {
   const cores = 8;
@@ -316,6 +314,8 @@ function telemetry(): SystemTelemetry {
   );
   const memoryTotalBytes = 16 * 1024 ** 3;
   const memoryUsedBytes = Math.round(drift(10.4, sequence, 0.3) * 1024 ** 3);
+  const receive = Math.round(drift(240_000, sequence, 90_000));
+  const transmit = Math.round(drift(40_000, sequence + 3, 18_000));
 
   return {
     cpuPercent: Number(
@@ -326,6 +326,19 @@ function telemetry(): SystemTelemetry {
     memoryTotalBytes,
     memoryUsedBytes,
     memoryPercent: Number(((memoryUsedBytes / memoryTotalBytes) * 100).toFixed(1)),
+    network: {
+      receiveBytesPerSec: receive,
+      transmitBytesPerSec: transmit,
+      interfaces: [
+        {
+          name: 'Ethernet',
+          description: 'Mock Gigabit Adapter',
+          receiveBytesPerSec: receive,
+          transmitBytesPerSec: transmit,
+          linkSpeedBitsPerSec: 1_000_000_000,
+        },
+      ],
+    },
   };
 }
 

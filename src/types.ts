@@ -139,11 +139,20 @@ export interface ProcessDetail {
 /**
  * Machine-wide load, sampled once per tick.
  *
- * Every field is nullable, and null always means "not measured" — never
- * "measured as zero". The backend refuses to invent a number for a reading
- * Windows does not expose to an unelevated process, so network throughput,
- * disk I/O, GPU load and temperature are absent rather than fabricated. The UI
- * renders null as "—".
+ * Every reading is nullable and **null always means "not measured", never
+ * "measured as zero"**. That distinction is the contract: a dashboard showing
+ * 0 °C because a provider failed is worse than one showing nothing, because the
+ * reader cannot tell the difference.
+ *
+ * It applies at two levels. Null on a whole section — `network`, `storage`,
+ * `gpus`, `thermal` — means the provider is not present on this machine at all.
+ * Null on a single rate inside a present section means the value could not be
+ * computed this tick, almost always because it is the first sample and a rate
+ * needs two.
+ *
+ * CPU and memory are flat because they always were. Network nests one level,
+ * and only because it genuinely has per-interface detail the machine-wide
+ * figure is derived from.
  */
 export interface SystemTelemetry {
   /** Machine-wide utilisation over the last interval, 0–100. */
@@ -151,9 +160,47 @@ export interface SystemTelemetry {
   /** Per-logical-processor utilisation, in the order Windows enumerates. */
   perCorePercent: number[] | null;
   logicalProcessors: number;
+  /**
+   * Physical memory installed in the machine. Never to be confused with
+   * `ProcessRow.memoryBytes`, which is one process's working set.
+   */
   memoryTotalBytes: number | null;
   memoryUsedBytes: number | null;
   memoryPercent: number | null;
+  network: NetworkTelemetry | null;
+}
+
+/**
+ * Machine-wide network throughput.
+ *
+ * Derived from cumulative octet counters, never read as an instantaneous rate.
+ * The totals are the sum of the per-interface rates that could actually be
+ * computed, so an interface that appeared this tick contributes nothing rather
+ * than its whole lifetime total.
+ */
+export interface NetworkTelemetry {
+  receiveBytesPerSec: number | null;
+  transmitBytesPerSec: number | null;
+  /** Operational, non-loopback, non-filter interfaces only. */
+  interfaces: NetworkInterface[];
+}
+
+export interface NetworkInterface {
+  /** The name Windows shows, e.g. "Ethernet". */
+  name: string;
+  /** The adapter's own description. */
+  description: string;
+  receiveBytesPerSec: number | null;
+  transmitBytesPerSec: number | null;
+  linkSpeedBitsPerSec: number | null;
+}
+
+/** How long one sampler tick took, in milliseconds. */
+export interface ScanTiming {
+  totalMillis: number;
+  processesMillis: number;
+  portsMillis: number;
+  telemetryMillis: number;
 }
 
 /** Everything one sampler tick produces. */
@@ -175,6 +222,8 @@ export interface Snapshot {
   conflicts: number | null;
   /** Machine-wide load for this tick. */
   system: SystemTelemetry;
+  /** What this tick cost. */
+  timing: ScanTiming;
   /**
    * Which version of the Developer Registry classified the services in this
    * snapshot. Shipped so a classification someone disagrees with can be pinned
