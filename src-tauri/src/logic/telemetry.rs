@@ -33,9 +33,11 @@
 //! a counter that reset, an interface that appeared mid-session, a thermal zone
 //! reporting absolute zero — be tested rather than waited for.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use crate::models::{NetworkInterface, NetworkTelemetry, StorageDrive, StorageTelemetry};
+use crate::models::{
+    GpuTelemetry, NetworkInterface, NetworkTelemetry, StorageDrive, StorageTelemetry,
+};
 
 /// One reading of the idle/kernel/user counters, in 100 ns units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -338,6 +340,124 @@ fn active_percent(previous_idle: u64, now_idle: u64, elapsed_millis: i64) -> Opt
     // apart, so a fully idle drive can report marginally more idle time than
     // elapsed time.
     Some(busy.clamp(0.0, 100.0) as f32)
+}
+
+// ------------------------------------------------------------------------ gpu
+
+/// One engine counter instance, already parsed out of its PDH instance name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawGpuEngine {
+    pub adapter: u64,
+    /// `3D`, `Copy`, `VideoDecode` and so on. Kept because engines are what
+    /// makes summing wrong.
+    pub engine_type: String,
+    pub utilization_percent: f64,
+}
+
+/// One adapter's memory counters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawGpuMemory {
+    pub adapter: u64,
+    pub dedicated_used_bytes: u64,
+    pub shared_used_bytes: u64,
+}
+
+/// One adapter as DXGI describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawGpuAdapter {
+    pub luid: u64,
+    pub name: String,
+    pub dedicated_memory_bytes: u64,
+}
+
+/// Fold the three GPU sources into one row per adapter.
+///
+/// Utilisation is the **maximum across engine types**, each engine type first
+/// summed across processes. Engines are separate hardware queues that run
+/// concurrently — a game rendering while a video decodes has both 3D and Video
+/// Decode busy — so adding them reports far over 100% for a machine doing one
+/// thing. Maximum is what Task Manager shows and it is the only reading of
+/// these counters that stays inside 0–100.
+///
+/// Adapters are keyed by LUID, which is what lets a counter instance, a memory
+/// instance and a DXGI description refer to the same card. An adapter known
+/// only to the counters still appears, named by its LUID rather than dropped:
+/// the utilisation is real even when the identity is missing.
+pub fn fold_gpus(
+    adapters: &[RawGpuAdapter],
+    engines: &[RawGpuEngine],
+    memory: &[RawGpuMemory],
+) -> Vec<GpuTelemetry> {
+    // BTreeMap rather than HashMap so the order is the adapter LUID order and
+    // therefore stable between ticks — a list of cards that reshuffles itself
+    // every second is unreadable.
+    let mut by_luid: BTreeMap<u64, GpuTelemetry> = BTreeMap::new();
+
+    for m in memory {
+        let row = adapter_entry(&mut by_luid, m.adapter);
+        row.dedicated_memory_used_bytes = Some(m.dedicated_used_bytes);
+        row.shared_memory_used_bytes = Some(m.shared_used_bytes);
+    }
+
+    // (adapter, engine type) -> utilisation summed across processes.
+    let mut per_engine: BTreeMap<(u64, &str), f64> = BTreeMap::new();
+    for e in engines {
+        *per_engine
+            .entry((e.adapter, e.engine_type.as_str()))
+            .or_insert(0.0) += e.utilization_percent;
+    }
+    // Then the maximum across engine types, per adapter.
+    for ((adapter, _), total) in per_engine {
+        let row = adapter_entry(&mut by_luid, adapter);
+        let best = row.utilization_percent.unwrap_or(0.0).max(total as f32);
+        row.utilization_percent = Some(best.clamp(0.0, 100.0));
+    }
+
+    for a in adapters {
+        let row = adapter_entry(&mut by_luid, a.luid);
+        row.name = a.name.clone();
+        row.dedicated_memory_total_bytes = Some(a.dedicated_memory_bytes);
+    }
+
+    // Windows keeps counter instances for adapters DXGI does not enumerate:
+    // the Basic Render Driver, remote-session adapters, and stale entries. On
+    // the development machine that is four counter LUIDs against two real
+    // cards. Keeping the two extra rows would make the UI say "3 other
+    // adapters" about a laptop with two.
+    //
+    // So an adapter survives if DXGI described it — that is a real card,
+    // however idle — or if its counters show something. What is dropped is
+    // only the rows that are both anonymous and entirely zero, which by
+    // definition carry no measurement.
+    let described: std::collections::BTreeSet<u64> = adapters.iter().map(|a| a.luid).collect();
+    by_luid
+        .into_iter()
+        .filter(|(luid, row)| described.contains(luid) || has_activity(row))
+        .map(|(_, row)| row)
+        .collect()
+}
+
+/// Whether a counter-only adapter measured anything at all.
+fn has_activity(row: &GpuTelemetry) -> bool {
+    row.utilization_percent.is_some_and(|u| u > 0.0)
+        || row.dedicated_memory_used_bytes.is_some_and(|b| b > 0)
+        || row.shared_memory_used_bytes.is_some_and(|b| b > 0)
+}
+
+/// The row for one adapter, created named by its LUID if nothing has described
+/// it yet.
+///
+/// An adapter known only to the counters still appears rather than being
+/// dropped: its utilisation is a real measurement even when DXGI did not
+/// enumerate it, and a nameless card is more useful than a missing one.
+fn adapter_entry(map: &mut BTreeMap<u64, GpuTelemetry>, luid: u64) -> &mut GpuTelemetry {
+    map.entry(luid).or_insert_with(|| GpuTelemetry {
+        name: format!("Adapter {luid:#018x}"),
+        utilization_percent: None,
+        dedicated_memory_used_bytes: None,
+        dedicated_memory_total_bytes: None,
+        shared_memory_used_bytes: None,
+    })
 }
 
 #[cfg(test)]
@@ -783,6 +903,160 @@ mod tests {
         let s = t.observe(1_000, &[drive(0, 9_000, 0, 0)]);
         assert_eq!(s.read_bytes_per_sec, None);
         assert_eq!(s.active_percent, None);
+    }
+
+    // ------------------------------------------------------------------- gpu
+
+    fn engine(adapter: u64, kind: &str, percent: f64) -> RawGpuEngine {
+        RawGpuEngine {
+            adapter,
+            engine_type: kind.into(),
+            utilization_percent: percent,
+        }
+    }
+
+    #[test]
+    fn gpu_utilisation_sums_within_an_engine_type_and_takes_the_max_across_them() {
+        // Two processes both rendering: 30 + 45 on 3D. A video decoding at 20
+        // on a different queue. The adapter is 75% busy, not 95%.
+        let gpus = fold_gpus(
+            &[RawGpuAdapter {
+                luid: 1,
+                name: "Test GPU".into(),
+                dedicated_memory_bytes: 8 << 30,
+            }],
+            &[
+                engine(1, "3D", 30.0),
+                engine(1, "3D", 45.0),
+                engine(1, "VideoDecode", 20.0),
+            ],
+            &[],
+        );
+
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].utilization_percent, Some(75.0));
+        assert_eq!(gpus[0].name, "Test GPU");
+        assert_eq!(gpus[0].dedicated_memory_total_bytes, Some(8 << 30));
+    }
+
+    #[test]
+    fn gpu_utilisation_cannot_exceed_one_hundred_percent() {
+        let gpus = fold_gpus(&[], &[engine(1, "3D", 80.0), engine(1, "3D", 80.0)], &[]);
+        assert_eq!(gpus[0].utilization_percent, Some(100.0));
+    }
+
+    #[test]
+    fn two_adapters_are_folded_separately_and_ordered_stably() {
+        let gpus = fold_gpus(
+            &[
+                RawGpuAdapter {
+                    luid: 20,
+                    name: "Discrete".into(),
+                    dedicated_memory_bytes: 8 << 30,
+                },
+                RawGpuAdapter {
+                    luid: 10,
+                    name: "Integrated".into(),
+                    dedicated_memory_bytes: 512 << 20,
+                },
+            ],
+            &[engine(10, "3D", 5.0), engine(20, "3D", 90.0)],
+            &[
+                RawGpuMemory {
+                    adapter: 10,
+                    dedicated_used_bytes: 100,
+                    shared_used_bytes: 200,
+                },
+                RawGpuMemory {
+                    adapter: 20,
+                    dedicated_used_bytes: 300,
+                    shared_used_bytes: 400,
+                },
+            ],
+        );
+
+        assert_eq!(gpus.len(), 2);
+        // Ordered by LUID, so the list does not reshuffle between ticks.
+        assert_eq!(gpus[0].name, "Integrated");
+        assert_eq!(gpus[1].name, "Discrete");
+        assert_eq!(gpus[0].utilization_percent, Some(5.0));
+        assert_eq!(gpus[1].utilization_percent, Some(90.0));
+        assert_eq!(gpus[0].dedicated_memory_used_bytes, Some(100));
+        assert_eq!(gpus[1].shared_memory_used_bytes, Some(400));
+    }
+
+    #[test]
+    fn an_adapter_the_counters_know_but_dxgi_did_not_still_appears() {
+        let gpus = fold_gpus(&[], &[engine(0x13c64, "3D", 12.0)], &[]);
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].utilization_percent, Some(12.0));
+        // Named by its LUID rather than dropped: the measurement is real even
+        // when the identity is missing.
+        assert!(gpus[0].name.contains("13c64"), "got {}", gpus[0].name);
+        assert_eq!(gpus[0].dedicated_memory_total_bytes, None);
+    }
+
+    #[test]
+    fn an_anonymous_adapter_with_nothing_on_its_counters_is_dropped() {
+        // Windows keeps counter instances for adapters DXGI does not
+        // enumerate. One that is both nameless and entirely zero carries no
+        // measurement, and keeping it would inflate the adapter count.
+        let gpus = fold_gpus(
+            &[],
+            &[engine(9, "3D", 0.0)],
+            &[RawGpuMemory {
+                adapter: 9,
+                dedicated_used_bytes: 0,
+                shared_used_bytes: 0,
+            }],
+        );
+        assert!(gpus.is_empty());
+    }
+
+    #[test]
+    fn an_adapter_dxgi_described_survives_however_idle_it_is() {
+        let gpus = fold_gpus(
+            &[RawGpuAdapter {
+                luid: 9,
+                name: "Idle GPU".into(),
+                dedicated_memory_bytes: 1 << 30,
+            }],
+            &[engine(9, "3D", 0.0)],
+            &[RawGpuMemory {
+                adapter: 9,
+                dedicated_used_bytes: 0,
+                shared_used_bytes: 0,
+            }],
+        );
+        assert_eq!(gpus.len(), 1, "a real card is not dropped for being idle");
+        assert_eq!(gpus[0].utilization_percent, Some(0.0));
+    }
+
+    #[test]
+    fn an_adapter_with_memory_but_no_engine_counters_reports_unmeasured_not_idle() {
+        let gpus = fold_gpus(
+            &[RawGpuAdapter {
+                luid: 1,
+                name: "Remote".into(),
+                dedicated_memory_bytes: 0,
+            }],
+            &[],
+            &[RawGpuMemory {
+                adapter: 1,
+                dedicated_used_bytes: 5_000,
+                shared_used_bytes: 0,
+            }],
+        );
+        assert_eq!(
+            gpus[0].utilization_percent, None,
+            "no engine counter is not 0%"
+        );
+        assert_eq!(gpus[0].dedicated_memory_used_bytes, Some(5_000));
+    }
+
+    #[test]
+    fn no_gpu_sources_at_all_folds_to_an_empty_list() {
+        assert!(fold_gpus(&[], &[], &[]).is_empty());
     }
 
     #[test]
