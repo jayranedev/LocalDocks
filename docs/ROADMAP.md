@@ -98,16 +98,51 @@ renders as an explicit unavailable state, never as a plausible zero.
 | Per-process memory | **IMPLEMENTED** | Working set, via `GetProcessMemoryInfo` |
 | Per-process threads, uptime | **IMPLEMENTED** | From the Toolhelp snapshot and creation time |
 | Aggregate CPU/memory across services | **IMPLEMENTED** | Summed in the Overview from real per-process values |
-| Total system CPU | **PLANNED** | `GetSystemTimes`; cheap, same delta shape as per-process |
-| Per logical processor | **PLANNED** | `NtQuerySystemInformation(SystemProcessorPerformanceInformation)` |
-| System memory | **PLANNED** | `GlobalMemoryStatusEx`; documented and cheap |
-| Network activity | **DEFERRED** | Per-interface counters are straightforward; per-process attribution is not, and a chart that cannot say *which* service is talking is decoration |
-| Storage activity | **DEFERRED** | `IO_COUNTERS` per process is available; disk-level throughput needs performance counters and a sampling model V1 does not have |
-| GPU metrics | **DEFERRED** | No vendor-neutral API that is reliable unelevated. Would mean shipping vendor paths, or fabricating |
-| Thermal | **DEFERRED** | WMI thermal zones are absent or wrong on most consumer hardware. Better absent than invented |
+| Total system CPU | **IMPLEMENTED** | `GetSystemTimes`; same delta shape as per-process. `null` on the first tick — a rate needs two samples, and a lifetime-since-boot average presented beside a live readout would be believed |
+| Per logical processor | **IMPLEMENTED** | `NtQuerySystemInformation(SystemProcessorPerformanceInformation)`, one bar per core in the Overview. `null` if the processor count changes between ticks rather than mispairing cores |
+| System memory | **IMPLEMENTED** | `GlobalMemoryStatusEx`. Used = total − *available*, which counts the reclaimable cache, because that is what Windows itself reports as usable |
+| Network activity | **DEFERRED** | `GetIfTable2` gives per-adapter byte counters, so a machine-wide rate is reachable. Per-*process* attribution — the number worth showing beside a service — needs an ETW session (`Microsoft-Windows-Kernel-Network`), and starting one needs elevation. A machine-wide rate on a per-service dashboard invites being read as the service's |
+| Storage activity | **DEFERRED** | `GetProcessIoCounters` is cheap and per-process, but counts file, network *and* device I/O together, so it cannot answer "how much is this touching the disk". Reporting it as disk activity would be wrong in a way the user could not detect |
+| GPU metrics | **DEFERRED** | Reachable only through vendor SDKs (NVML, ADL) or the performance-counter path Task Manager uses. Neither is a Win32 call; shipping an NVIDIA dependency to read one number is not the V1 trade |
+| Thermal | **DEFERRED** | `MSAcpi_ThermalZoneTemperature` is unimplemented on most consumer hardware and returns a fixed value where it exists. A field that is wrong on most machines is worse than no field |
 
 The four deferred rows are deferred on evidence, not appetite. Each is
-revisited when there is a way to report it that is honest at a glance.
+revisited when there is a way to report it that is honest at a glance. All four
+are present in the IPC contract as `null`, not absent from it — the day one
+becomes measurable, nothing in the frontend changes shape.
+
+### V1 Developer classification
+
+**IMPLEMENTED.** Developer mode narrows Services, Processes *and* Ports from one
+classification decision, made by a central versioned registry
+(`src-tauri/src/logic/registry.rs`) and applied by a deterministic classifier
+(`src-tauri/src/logic/classify.rs`). ARCHITECTURE.md § 4c is the full design.
+
+Measured against the development machine it was built on — 409 processes, 130
+listening sockets, 28 services:
+
+| Verdict | Count | Examples |
+|---|---|---|
+| Developer | 2 | `node` running Vite; `adb` |
+| System | 19 | Chrome, Brave, Spotify, Steam, Epic, iCloud ×4, Apple device services ×2, NVIDIA ×2, WhatsApp, Claude, Edge WebView2 |
+| Unclassified | 7 | VS Code ×5, and two helpers not in either table |
+
+Every one of the 28 carries a sentence naming the rule that classified it.
+
+**Not release-complete.** The registry is not exhaustive and does not claim to
+be — that is what the `unknown` verdict is for. Known gaps, all deliberate:
+
+- **Editors are unclassified by design.** A VS Code port-forward or Live Preview
+  socket is hidden in Developer mode. See ARCHITECTURE.md § 4c.
+- **Compiled binaries are unreachable.** A Go or Rust dev server compiles to an
+  executable with an arbitrary name and no signature-bearing command line, so it
+  classifies `unknown`. `go run` is the same case — the listener is a temporary
+  binary, not `go.exe`. There is no observable data that fixes this in V1;
+  V2 project detection is what would.
+- **Java is thin.** JVM dev servers are launched through wrappers whose command
+  lines rarely carry a recognisable token.
+- **The registry will need entries.** Adding one is a code change and a version
+  bump, deliberately — it is a decision, not configuration.
 
 ### Explicitly not in V1
 
@@ -124,7 +159,9 @@ Tracked, deliberately not blocking:
 - Retry affordance on the error state
 - Command palette covers services only
 - Working directory renders `unavailable` (see the table above)
-- System telemetry rows marked **PLANNED** above
+- System telemetry rows marked **DEFERRED** above
+- Developer Registry coverage gaps (see § V1 Developer classification)
+- No in-app way to report or override a classification
 
 ---
 

@@ -59,16 +59,20 @@ src-tauri/src/
 ├── commands.rs                the five IPC handlers — thin, no logic
 ├── sampler.rs                 cadence, state, orchestration
 ├── logic/                     pure, syscall-free, unit-tested
+│   ├── classify.rs            registry + observable data -> one verdict
 │   ├── cpu.rs                 delta maths
 │   ├── identity.rs            parsing `{pid}-{startedAt}`
 │   ├── ports.rs               address presentation, PID attribution
 │   ├── process.rs             raw processes -> ProcessRow
+│   ├── registry.rs            the Developer Registry — the only file that names a program
 │   ├── service.rs             the Process + Endpoint[] join
+│   ├── telemetry.rs           machine CPU deltas, memory arithmetic
 │   └── url.rs                 the open_external allowlist
 ├── platform/windows/          every `use windows::…`, behind #[cfg]
-│   ├── control.rs             detail, terminate, ShellExecuteW
+│   ├── control.rs             detail, terminate, ShellExecuteW, command lines
 │   ├── ports.rs               the four extended-table calls
-│   └── process.rs             Toolhelp + OpenProcess
+│   ├── process.rs             Toolhelp + OpenProcess
+│   └── system.rs              GetSystemTimes, per-core, GlobalMemoryStatusEx
 ├── models.rs                  serde types shared with TypeScript
 └── errors.rs
 ```
@@ -85,8 +89,13 @@ Two rules that matter more than the layout:
    cost once `windows::` imports are scattered across a dozen files is a
    miserable afternoon; the cost today is one line.
 2. **`logic/` never calls a syscall.** Endpoint grouping, CPU deltas, the
-   service predicate, dual-stack detection, conflict detection — all plain
-   functions over plain data. This is where the bugs are and where the tests go.
+   service predicate, dual-stack detection, developer classification, telemetry
+   arithmetic, conflict detection — all plain functions over plain data. This is
+   where the bugs are and where the tests go.
+3. **`registry.rs` is the only file that names a program.** Every executable
+   name and command-line token in the codebase lives there, versioned. Scattering
+   name checks through the UI or the screens is how four screens start
+   disagreeing about what a developer service is.
 
 ---
 
@@ -146,6 +155,21 @@ genuinely unpleasant:
 **Recommendation: none of these in the scan loop, ever.** Fetch on detail-panel
 open.
 
+**Amended for the Developer classifier — IMPLEMENTED.** The classifier cannot
+work without command lines: a general-purpose runtime's name proves nothing
+about what it is running, and the required reasons ("launched with the Vite
+signature") cannot exist without the line that carries the token. So a bounded
+read *is* now in the tick, and the bounds are what keep the original rule's
+intent:
+
+| Bound | Effect |
+|---|---|
+| Services only | ~28 candidates, not ~400 |
+| Only general-purpose runtimes | 1 of 409 processes on the measured machine — a dedicated program is decided by its name, an excluded one is already refused |
+| Cached by process identity | Read once per process lifetime, not once per tick; failures cached too |
+| Pruned each tick | The cache is bounded by what is running, not by uptime |
+| Through `open_verified` | A recycled PID yields nothing, never another process's command line — and so never another process's classification |
+
 **Decided.** Command line uses `ProcessCommandLineInformation` (class 60) —
 **IMPLEMENTED**. It needs no `PROCESS_VM_READ`, no `ReadProcessMemory` and is
 not bitness-fragile, which is what ruled out the PEB walk. The size is queried
@@ -156,6 +180,28 @@ table already rates as fragile, and it needs a wider handle than anything else
 in the app. It renders as `FieldState::Unavailable` — an honest absence rather
 than a blank that reads like an answer. Revisit when V2 project detection
 forces the issue, exactly as this section originally advised.
+
+### V1 — system telemetry
+
+| Need | API | Status |
+|---|---|---|
+| Machine CPU | `GetSystemTimes` | **IMPLEMENTED** |
+| Per logical processor | `NtQuerySystemInformation(SystemProcessorPerformanceInformation)`, class 8 | **IMPLEMENTED** |
+| Physical memory | `GlobalMemoryStatusEx` | **IMPLEMENTED** |
+
+All three are counters or levels the kernel already maintains: no handle, no
+privilege, one call each. The class-8 struct is declared locally because the
+`windows` crate does not expose it; only the first three fields are read.
+
+The trap worth naming: **kernel time already includes idle time.** The busy
+share is `(kernel + user − idle) / (kernel + user)`. Subtracting idle from the
+denominator as well produces numbers that look plausible and are wrong, so
+`logic::telemetry` has a test for exactly that.
+
+Every reading is independently optional. A failed CPU query must not blank the
+memory figures, and neither may take a tick down — telemetry is decoration on a
+process dashboard. ROADMAP.md records what is deferred and why; none of it is
+fabricated to fill a slot.
 
 ### V1 — actions
 
