@@ -12,6 +12,7 @@ import {
   isFieldOk,
   localUrl,
 } from '../lib/format';
+import { RELEVANCE_LABELS } from '../lib/view';
 import { Icon } from './Icon';
 import { Button, Chip, IconButton, SectionLabel, StatusDot } from './ui';
 
@@ -108,6 +109,26 @@ export function ProcessDetailPanel({ target, onClose, onTerminate }: Props) {
                     Same PID on both stacks — grouped into one service.
                   </p>
                 )}
+              </div>
+            </>
+          )}
+
+          {target.classification && (
+            <>
+              <div className="mb-2">
+                <SectionLabel>CLASSIFICATION</SectionLabel>
+              </div>
+              {/* The reason, in full, is the accountability the registry owes
+                  the user: a verdict they cannot check is one they cannot
+                  correct. It names the rule that fired — a registry entry, a
+                  matched signature, or the absence of both. */}
+              <div className="mb-[17px] rounded-lg border border-border bg-surface px-3 py-[11px]">
+                <Chip tone={target.classification.relevance === 'developer' ? 'accent' : 'quiet'}>
+                  {RELEVANCE_LABELS[target.classification.relevance]}
+                </Chip>
+                <p className="mt-2 text-[11.5px] leading-[1.55] text-secondary">
+                  {target.classification.reason}
+                </p>
               </div>
             </>
           )}

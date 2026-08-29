@@ -21,6 +21,7 @@ function snapshot(): Snapshot {
       memoryUsedBytes: null,
       memoryPercent: null,
     },
+    registryVersion: 1,
     services: [
       {
         id: SVC_ID,
@@ -36,6 +37,8 @@ function snapshot(): Snapshot {
         uptimeSeconds: 4342,
         endpoints: [tcp('127.0.0.1', 5173), tcp('[::1]', 5173)],
         status: 'running',
+  relevance: 'developer',
+  relevanceReason: 'Node.js launched with the Vite signature.',
       },
     ],
     processes: [

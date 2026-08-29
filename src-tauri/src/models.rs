@@ -92,6 +92,25 @@ pub enum PortState {
     Listening,
 }
 
+/// TS: `type Relevance = 'developer' | 'system' | 'unknown'`
+///
+/// What the Developer Registry made of a service. Three outcomes, not two:
+/// `Unknown` is the default and it is a real answer, not a shrug. The registry
+/// is not exhaustive, so a service it has never seen is reported as
+/// unrecognised rather than guessed into one of the other two buckets.
+///
+/// Developer mode shows `Developer` and nothing else. `System` and `Unknown`
+/// both hide, but they are kept apart because they are different claims —
+/// "this is Spotify" versus "this has not been classified" — and the
+/// difference is what makes a wrong classification reportable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Relevance {
+    Developer,
+    System,
+    Unknown,
+}
+
 /// TS: `interface Service` — tier 1, refreshed every sampler tick.
 /// Constructed by service joining (docs/ROADMAP.md milestone 5).
 #[allow(dead_code)]
@@ -113,6 +132,13 @@ pub struct Service {
     pub uptime_seconds: f64,
     pub endpoints: Vec<Endpoint>,
     pub status: ServiceStatus,
+    /// What the Developer Registry concluded. See `logic::classify`.
+    pub relevance: Relevance,
+    /// One sentence naming the rule that produced `relevance`, shown in the UI
+    /// and printed in the validation report. Never empty: an unexplained
+    /// classification is one the user cannot argue with, which is the failure
+    /// mode a registry is supposed to avoid.
+    pub relevance_reason: String,
 }
 
 /// TS: `interface ProcessRow`
@@ -197,6 +223,10 @@ pub struct Snapshot {
     pub conflicts: Option<u32>,
     /// Machine-wide load for this tick.
     pub system: SystemTelemetry,
+    /// Which Developer Registry produced the `relevance` on every service in
+    /// this snapshot. Shipped so a classification someone disagrees with can
+    /// be pinned to a specific version of the tables.
+    pub registry_version: u32,
 }
 
 /// TS: `type FieldState<T>`
@@ -283,6 +313,7 @@ mod tests {
             ports: Vec::new(),
             conflicts: None,
             system: SystemTelemetry::default(),
+            registry_version: 1,
         };
         let v = serde_json::to_value(&s).unwrap();
 
@@ -297,6 +328,7 @@ mod tests {
         assert!(v.get("conflicts").is_some());
         assert!(v["conflicts"].is_null());
 
+        assert_eq!(v["registryVersion"], 1);
         // Unmeasured telemetry is null, never a confident zero.
         for key in [
             "cpuPercent",
@@ -308,6 +340,75 @@ mod tests {
             assert!(v["system"][key].is_null(), "system.{key} should be null");
         }
         assert_eq!(v["system"]["logicalProcessors"], 0);
+    }
+
+    #[test]
+    fn relevance_serialises_as_the_three_lowercase_variants() {
+        assert_eq!(
+            serde_json::to_value(Relevance::Developer).unwrap(),
+            "developer"
+        );
+        assert_eq!(serde_json::to_value(Relevance::System).unwrap(), "system");
+        assert_eq!(serde_json::to_value(Relevance::Unknown).unwrap(), "unknown");
+    }
+
+    #[test]
+    fn a_service_carries_its_classification_in_camel_case() {
+        let service = Service {
+            id: make_process_id(8420, "2026-08-28T09:00:00.000Z"),
+            label: "node:5173".into(),
+            framework: None,
+            process_name: "node.exe".into(),
+            pid: 8420,
+            parent_pid: 6104,
+            cpu_percent: 2.3,
+            memory_bytes: 148_897_792,
+            thread_count: 18,
+            started_at: "2026-08-28T09:00:00.000Z".into(),
+            uptime_seconds: 4342.0,
+            endpoints: Vec::new(),
+            status: ServiceStatus::Running,
+            relevance: Relevance::Developer,
+            relevance_reason: "Node.js launched with the Vite signature.".into(),
+        };
+        let v = serde_json::to_value(&service).unwrap();
+        assert_eq!(v["relevance"], "developer");
+        assert_eq!(
+            v["relevanceReason"],
+            "Node.js launched with the Vite signature."
+        );
+        assert!(v.get("relevance_reason").is_none());
+    }
+
+    #[test]
+    fn fields_serialise_as_camel_case() {
+        let row = ProcessRow {
+            id: make_process_id(8420, "2026-08-28T09:00:00.000Z"),
+            pid: 8420,
+            parent_pid: 6104,
+            name: "node.exe".into(),
+            cpu_percent: 2.3,
+            memory_bytes: 148_897_792,
+            thread_count: 18,
+            started_at: "2026-08-28T09:00:00.000Z".into(),
+            uptime_seconds: 4342.0,
+            status: ProcessStatus::Running,
+            is_service: true,
+        };
+        let v = serde_json::to_value(&row).unwrap();
+
+        for key in [
+            "parentPid",
+            "cpuPercent",
+            "memoryBytes",
+            "threadCount",
+            "startedAt",
+            "uptimeSeconds",
+            "isService",
+        ] {
+            assert!(v.get(key).is_some(), "missing camelCase key {key}");
+        }
+        assert!(v.get("parent_pid").is_none(), "snake_case leaked into JSON");
     }
 
     #[test]
