@@ -37,6 +37,7 @@ use std::time::Duration;
 
 use crate::errors::SystemError;
 use crate::logic::cpu::CpuTracker;
+use crate::logic::ports::map_ports;
 use crate::logic::process::map_processes;
 use crate::models::Snapshot;
 use crate::platform;
@@ -200,15 +201,21 @@ where
     log::info!("sampler started");
 
     loop {
-        // Scan outside the lock. Enumeration is the expensive part and holding
-        // the mutex across it would block `get_snapshot` for its duration.
-        let scanned = platform::windows::process::enumerate();
+        // Both scans outside the lock. Enumeration is the expensive part and
+        // holding the mutex across it would block `get_snapshot` for its
+        // duration.
+        //
+        // Processes first, then sockets: port attribution reads the process
+        // list, and doing it in this order means the process a socket is
+        // attributed to was observed no later than the socket itself.
+        let scanned = platform::windows::process::enumerate()
+            .and_then(|processes| platform::windows::ports::enumerate().map(|p| (processes, p)));
         let captured_at_millis = time::now_unix_millis();
 
         let event = match scanned {
-            Ok(raw) => {
+            Ok((raw, endpoints)) => {
                 let mut state = lock(&shared.state);
-                let snapshot = advance(&mut state, captured_at_millis, &raw);
+                let snapshot = advance(&mut state, captured_at_millis, &raw, &endpoints);
                 drop(state);
                 SamplerEvent::Update(snapshot)
             }
@@ -247,12 +254,14 @@ where
 
 /// Fold one successful scan into state and produce the snapshot for it.
 ///
-/// Pure with respect to the OS — it takes the scan as data — so the invariants
-/// that matter (sequence increases, timestamps progress) are unit-testable.
+/// Pure with respect to the OS — it takes both scans as data — so the
+/// invariants that matter (sequence increases, timestamps progress, ports
+/// attribute to processes from the same tick) are unit-testable.
 fn advance(
     state: &mut State,
     captured_at_millis: i64,
     raw: &[platform::windows::process::RawProcess],
+    endpoints: &[platform::windows::ports::RawEndpoint],
 ) -> Snapshot {
     state.sequence += 1;
 
@@ -271,12 +280,20 @@ fn advance(
         );
     }
 
+    // Attribution uses this tick's own process data, so a socket is never
+    // matched against a process list from a different moment.
+    let ports = map_ports(endpoints, raw, &mapping.rows);
+
     let snapshot = Snapshot {
         sequence: state.sequence,
         captured_at: time::to_iso8601(captured_at_millis),
+        // Joining processes and endpoints into Services is the next milestone
+        // (docs/ROADMAP.md § 2.2). Empty is the truthful representation of work
+        // that has not been done, and `conflicts` stays unknown rather than a
+        // confident zero.
         services: Vec::new(),
         processes: mapping.rows,
-        ports: Vec::new(),
+        ports,
         conflicts: None,
     };
 
@@ -337,8 +354,11 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Protocol;
+    use crate::platform::windows::ports::RawEndpoint;
     use crate::platform::windows::process::{ProcessProbe, RawProcess};
     use std::collections::HashSet;
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
 
@@ -361,6 +381,16 @@ mod tests {
                 cpu_time_100ns: 0,
                 working_set_bytes: 4096,
             },
+        }
+    }
+
+    fn socket(port: u16, pid: u32) -> RawEndpoint {
+        RawEndpoint {
+            protocol: Protocol::Tcp,
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            scope_id: 0,
+            port,
+            pid,
         }
     }
 
@@ -423,7 +453,7 @@ mod tests {
         let scan = vec![raw(1, T0 - 1000)];
 
         let sequences: Vec<u64> = (0..5)
-            .map(|i| advance(&mut s, T0 + i * 1000, &scan).sequence)
+            .map(|i| advance(&mut s, T0 + i * 1000, &scan, &[]).sequence)
             .collect();
 
         assert_eq!(sequences, vec![1, 2, 3, 4, 5]);
@@ -434,9 +464,9 @@ mod tests {
         let mut s = state();
         let scan = vec![raw(1, T0 - 1000)];
 
-        let a = advance(&mut s, T0, &scan);
-        let b = advance(&mut s, T0 + 1000, &scan);
-        let c = advance(&mut s, T0 + 2000, &scan);
+        let a = advance(&mut s, T0, &scan, &[]);
+        let b = advance(&mut s, T0 + 1000, &scan, &[]);
+        let c = advance(&mut s, T0 + 2000, &scan, &[]);
 
         assert!(a.captured_at < b.captured_at);
         assert!(b.captured_at < c.captured_at);
@@ -450,7 +480,7 @@ mod tests {
         assert_eq!(s.snapshot.sequence, 0);
         assert!(s.snapshot.processes.is_empty());
 
-        advance(&mut s, T0, &[raw(1, T0 - 1000), raw(2, T0 - 2000)]);
+        advance(&mut s, T0, &[raw(1, T0 - 1000), raw(2, T0 - 2000)], &[]);
 
         assert_eq!(s.snapshot.sequence, 1);
         assert_eq!(s.snapshot.processes.len(), 2);
@@ -460,24 +490,74 @@ mod tests {
     fn a_snapshot_never_contains_two_rows_with_the_same_identity() {
         let mut s = state();
         let scan: Vec<_> = (1..60u32).map(|pid| raw(pid, T0 - (pid as i64))).collect();
-        let snapshot = advance(&mut s, T0, &scan);
+        let snapshot = advance(&mut s, T0, &scan, &[]);
 
         assert_eq!(snapshot.processes.len(), 59);
         assert!(has_unique_identities(&snapshot));
     }
 
     #[test]
-    fn this_milestone_leaves_services_ports_and_conflicts_alone() {
-        // Port discovery and service joining are later milestones. Empty is the
-        // truthful representation of work that has not been done, and
-        // `conflicts` stays unknown rather than a confident zero.
+    fn this_milestone_leaves_services_and_conflicts_alone() {
+        // Service joining is the next milestone. Empty is the truthful
+        // representation of work that has not been done, and `conflicts` stays
+        // unknown rather than a confident zero. Ports are now real.
         let mut s = state();
-        let snapshot = advance(&mut s, T0, &[raw(1, T0 - 1000)]);
+        let snapshot = advance(&mut s, T0, &[raw(1, T0 - 1000)], &[socket(5173, 1)]);
 
         assert!(snapshot.services.is_empty());
-        assert!(snapshot.ports.is_empty());
         assert!(snapshot.conflicts.is_none());
         assert!(!snapshot.processes.is_empty());
+        assert_eq!(snapshot.ports.len(), 1);
+        assert!(snapshot.ports.iter().all(|p| p.service_label.is_none()));
+    }
+
+    #[test]
+    fn one_tick_attributes_sockets_to_that_same_tick_s_processes() {
+        // The whole point of scanning both inside one tick: the identity on a
+        // port row must come from the process list captured beside it.
+        let mut s = state();
+        let snapshot = advance(
+            &mut s,
+            T0,
+            &[raw(1, T0 - 1000), raw(2, T0 - 2000)],
+            &[socket(5173, 1), socket(8000, 2), socket(9999, 4242)],
+        );
+
+        let by_port = |port: u16| {
+            snapshot
+                .ports
+                .iter()
+                .find(|p| p.port == port)
+                .unwrap_or_else(|| panic!("no row for port {port}"))
+        };
+
+        let owned = by_port(5173);
+        let process = snapshot.processes.iter().find(|p| p.pid == 1).unwrap();
+        assert_eq!(owned.process_id.as_ref(), Some(&process.id));
+        assert_eq!(by_port(8000).process_id.is_some(), true);
+
+        // A PID that was not in this tick's process scan stays informational.
+        let orphan = by_port(9999);
+        assert_eq!(orphan.process_id, None);
+        assert_eq!(orphan.pid, 4242);
+    }
+
+    #[test]
+    fn ports_are_rebuilt_each_tick_rather_than_accumulating() {
+        // No port history in V1: a socket that closes is gone from the next
+        // snapshot, and nothing grows without bound.
+        let mut s = state();
+        let scan = [raw(1, T0 - 1000)];
+
+        let first = advance(&mut s, T0, &scan, &[socket(5173, 1), socket(8000, 1)]);
+        assert_eq!(first.ports.len(), 2);
+
+        let second = advance(&mut s, T0 + 1000, &scan, &[socket(5173, 1)]);
+        assert_eq!(second.ports.len(), 1, "a closed socket must not linger");
+        assert_eq!(second.ports[0].port, 5173);
+
+        let third = advance(&mut s, T0 + 2000, &scan, &[]);
+        assert!(third.ports.is_empty());
     }
 
     #[test]
@@ -487,10 +567,10 @@ mod tests {
         let mut s = state();
         assert_eq!(s.cpu.tracked(), 0);
 
-        advance(&mut s, T0, &[raw(1, T0 - 1000), raw(2, T0 - 1000)]);
+        advance(&mut s, T0, &[raw(1, T0 - 1000), raw(2, T0 - 1000)], &[]);
         assert_eq!(s.cpu.tracked(), 2);
 
-        advance(&mut s, T0 + 1000, &[raw(1, T0 - 1000)]);
+        advance(&mut s, T0 + 1000, &[raw(1, T0 - 1000)], &[]);
         assert_eq!(s.cpu.tracked(), 1, "an exited process must be retired");
     }
 
@@ -591,7 +671,22 @@ mod tests {
         for (_, s) in &snapshots {
             assert!(!s.processes.is_empty(), "a live machine has processes");
             assert!(has_unique_identities(s), "duplicate identity in a snapshot");
-            assert!(s.services.is_empty() && s.ports.is_empty());
+            assert!(
+                s.services.is_empty(),
+                "service joining is the next milestone"
+            );
+            for p in &s.ports {
+                assert!(p.port > 0, "port 0 is not a bound port");
+                assert!(!p.address.is_empty(), "every row carries an address");
+                assert!(p.service_label.is_none(), "labels arrive with Services");
+            }
+            let mut sockets = HashSet::new();
+            for p in &s.ports {
+                assert!(
+                    sockets.insert((p.protocol, p.address.as_str(), p.port, p.pid)),
+                    "duplicate socket row would collide the frontend key: {p:?}"
+                );
+            }
             for p in &s.processes {
                 assert!((0.0..=100.0).contains(&p.cpu_percent), "cpu out of range");
                 assert_eq!(p.id, crate::models::make_process_id(p.pid, &p.started_at));

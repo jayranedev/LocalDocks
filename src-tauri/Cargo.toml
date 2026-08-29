@@ -33,9 +33,13 @@ tauri-plugin-log = "2"
 #   Win32_System_Diagnostics_ToolHelp   CreateToolhelp32Snapshot, Process32*W
 #   Win32_System_Threading              OpenProcess, GetProcessTimes
 #   Win32_System_ProcessStatus          GetProcessMemoryInfo (working set)
+#   Win32_NetworkManagement_IpHelper    GetExtendedTcpTable / GetExtendedUdpTable
+#   Win32_Networking_WinSock            AF_INET / AF_INET6
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
   "Win32_Foundation",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_Networking_WinSock",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_ProcessStatus",
   "Win32_System_Threading",

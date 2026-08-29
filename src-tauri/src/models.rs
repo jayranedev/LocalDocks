@@ -30,11 +30,15 @@ pub fn make_process_id(pid: u32, started_at: &str) -> ProcessId {
 }
 
 /// TS: `type Protocol = 'TCP' | 'UDP'`
+///
+/// `Hash` because the protocol is one component of an endpoint's identity
+/// (docs/ARCHITECTURE.md § 5), and deduplicating sockets means putting that
+/// identity in a set.
 /// Constructed by port discovery (docs/ROADMAP.md milestone 4). Suppressed
 /// narrowly rather than at module level so that dead code anywhere else in
 /// this file is a real warning.
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Protocol {
     Tcp,
