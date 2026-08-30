@@ -6,6 +6,7 @@ import { secondsSince } from './lib/format';
 import { loadSettings, saveSettings } from './lib/settings';
 import { viewSnapshot } from './lib/view';
 import { useSnapshot, useTheme, useTicker } from './hooks/useSnapshot';
+import { useUpdates } from './hooks/useUpdates';
 
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
@@ -40,6 +41,10 @@ export default function App() {
   const state = useSnapshot(settings.intervalMs);
   useTicker(100); // keeps the "scanned N s ago" readout moving
 
+  /* The update channel. Nothing here runs during startup: the first automatic
+     check waits until the window is up, and only if the user has left it on. */
+  const updates = useUpdates(settings.autoUpdateCheck);
+
   const setTheme = useCallback((theme: Theme) => {
     setSettings((s) => {
       const next = { ...s, theme };
@@ -51,6 +56,14 @@ export default function App() {
   const setIntervalMs = useCallback((intervalMs: number) => {
     setSettings((s) => {
       const next = { ...s, intervalMs };
+      saveSettings(next);
+      return next;
+    });
+  }, []);
+
+  const setAutoUpdateCheck = useCallback((autoUpdateCheck: boolean) => {
+    setSettings((s) => {
+      const next = { ...s, autoUpdateCheck };
       saveSettings(next);
       return next;
     });
@@ -190,6 +203,9 @@ export default function App() {
                   onThemeChange={setTheme}
                   intervalMs={settings.intervalMs}
                   onIntervalChange={setIntervalMs}
+                  updates={updates}
+                  autoUpdateCheck={settings.autoUpdateCheck}
+                  onAutoUpdateCheckChange={setAutoUpdateCheck}
                 />
               )}
             </>
@@ -234,6 +250,11 @@ export default function App() {
         age={snapshot ? secondsSince(snapshot.capturedAt) : 0}
         intervalMs={settings.intervalMs}
         error={scanError}
+        updateAvailable={
+          updates.state.kind === 'available'
+            ? { version: updates.state.version, onOpen: () => setScreen('settings') }
+            : null
+        }
       />
     </div>
   );

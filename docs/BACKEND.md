@@ -336,7 +336,9 @@ Executable names, PIDs, port numbers and Windows error text can reach the file.
 Command lines, file paths and working directories cannot — they are read for the
 detail panel and the classifier, and neither logs at warn or above.
 
-Nothing is transmitted. There is no network client in the dependency tree.
+None of it is transmitted. The only network request LocalDocks makes is the
+update check (docs/UPDATES.md), which is a `GET` carrying no body and no
+identifier — nothing observed here can reach it.
 
 ---
 

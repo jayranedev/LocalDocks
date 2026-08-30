@@ -19,6 +19,7 @@ mod models;
 mod platform;
 mod sampler;
 mod time;
+mod updates;
 
 use std::time::Duration;
 
@@ -37,10 +38,11 @@ const DEFAULT_INTERVAL_MS: u64 = 1000;
 /// # Release
 ///
 /// Warnings and errors, to a rotating file in the OS application-log directory
-/// — `%LOCALAPPDATA%\\com.silentminds.localdocks\\logs` on Windows. Nothing is
-/// sent anywhere: LocalDocks has no network client, no crash reporter and no
-/// analytics, and this file is the only thing it ever writes outside its
-/// settings.
+/// — `%LOCALAPPDATA%\\com.silentminds.localdocks\\logs` on Windows. **This file
+/// is never sent anywhere.** LocalDocks has no crash reporter and no
+/// analytics; the one network request it makes is the update check in
+/// `updates`, which uploads nothing, and this file is the only thing it ever
+/// writes outside its settings.
 ///
 /// It exists because the alternative was worse. A shipped app whose sampler
 /// stops updating leaves the user with nothing to attach to a bug report and
@@ -94,6 +96,13 @@ pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
             app.handle().plugin(logging())?;
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
+            // Holds whatever the last update check approved. Empty until the
+            // frontend asks, which it does after it has rendered — nothing on
+            // this path runs during startup. See `updates`.
+            app.manage(updates::PendingUpdate::default());
 
             // The sampler is managed state so commands can reach it, and is
             // started here rather than lazily on first subscribe: the first
@@ -127,7 +136,10 @@ pub fn run() {
             commands::set_sample_interval,
             commands::get_process_detail,
             commands::terminate_process,
-            commands::open_external
+            commands::open_external,
+            commands::update_capability,
+            commands::check_for_update,
+            commands::install_update
         ])
         .build(tauri::generate_context!())
         // The only panic on this path, and it is the right one: if the

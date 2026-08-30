@@ -7,6 +7,7 @@
 pub mod control;
 pub mod gpu;
 pub mod network;
+pub mod packaging;
 pub mod pdh;
 pub mod ports;
 pub mod process;

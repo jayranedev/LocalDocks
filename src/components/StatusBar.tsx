@@ -16,9 +16,23 @@ interface StatusBarProps {
   intervalMs: number;
   /** Present while scans are failing; the data shown is the last good snapshot. */
   error: { message: string; detail: string } | null;
+  /**
+   * Set when a newer stable release exists. Rendered as one quiet, clickable
+   * word — an update is worth mentioning, never worth interrupting a scan for.
+   */
+  updateAvailable: { version: string; onOpen: () => void } | null;
 }
 
-export function StatusBar({ mode, hidden, serviceCount, conflicts, age, intervalMs, error }: StatusBarProps) {
+export function StatusBar({
+  mode,
+  hidden,
+  serviceCount,
+  conflicts,
+  age,
+  intervalMs,
+  error,
+  updateAvailable,
+}: StatusBarProps) {
   return (
     <footer className="flex h-[30px] flex-none items-center gap-3.5 border-t border-border bg-surface-raised px-3.5 text-[11.5px] text-muted">
       <span className="flex items-center gap-[7px]">
@@ -47,6 +61,21 @@ export function StatusBar({ mode, hidden, serviceCount, conflicts, age, interval
       </span>
 
       <div className="flex-1" />
+
+      {updateAvailable && (
+        <>
+          <button
+            type="button"
+            onClick={updateAvailable.onOpen}
+            title={`LocalDocks ${updateAvailable.version} is available — open Settings to install it`}
+            className="flex items-center gap-[5px] rounded-[5px] px-1 text-accent transition-colors hover:underline"
+          >
+            <Icon name="download" size={13} />
+            <span>v{updateAvailable.version} available</span>
+          </button>
+          <span>·</span>
+        </>
+      )}
 
       {error ? (
         <span className="flex items-center gap-[5px] text-danger" title={error.detail}>

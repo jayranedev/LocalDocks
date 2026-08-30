@@ -358,3 +358,37 @@ export type Theme = 'local-dark' | 'dark' | 'light';
  * either way, and all narrowing happens in one place (`src/lib/view.ts`).
  */
 export type AppMode = 'developer' | 'system';
+
+/**
+ * What this installation can do about updates.
+ *
+ * Answered by the backend from process state, not guessed here: an MSIX
+ * install has package identity and the Microsoft Store owns its updates, so
+ * the app must not offer to replace itself. See
+ * `src-tauri/src/platform/windows/packaging.rs`.
+ */
+export interface UpdateCapability {
+  managedByStore: boolean;
+  currentVersion: string;
+}
+
+/**
+ * The outcome of one update check.
+ *
+ * Every variant is a state the UI renders, including the failures. A GitHub
+ * outage is not an error in a process monitor, and the union is shaped so
+ * there is nowhere for one to be thrown from.
+ */
+export type UpdateCheck =
+  | { kind: 'upToDate'; currentVersion: string }
+  | {
+      kind: 'available';
+      currentVersion: string;
+      version: string;
+      notes: string | null;
+      publishedAt: string | null;
+    }
+  /** This install does not update itself — only ever the Microsoft Store. */
+  | { kind: 'unsupported'; reason: string }
+  /** The check could not be completed. Nothing about the app is affected. */
+  | { kind: 'failed'; reason: string };

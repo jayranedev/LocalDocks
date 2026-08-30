@@ -11,6 +11,7 @@ pub mod identity;
 pub mod ports;
 pub mod process;
 pub mod registry;
+pub mod release;
 pub mod service;
 pub mod telemetry;
 pub mod url;

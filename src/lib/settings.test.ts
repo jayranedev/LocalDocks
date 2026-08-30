@@ -19,10 +19,13 @@ describe('settings coercion', () => {
   });
 
   it('accepts a valid stored object', () => {
-    expect(coerce({ theme: 'dark', intervalMs: 2000, mode: 'system' })).toEqual({
+    expect(
+      coerce({ theme: 'dark', intervalMs: 2000, mode: 'system', autoUpdateCheck: false }),
+    ).toEqual({
       theme: 'dark',
       intervalMs: 2000,
       mode: 'system',
+      autoUpdateCheck: false,
     });
   });
 
@@ -43,6 +46,7 @@ describe('settings coercion', () => {
       theme: DEFAULT_SETTINGS.theme,
       intervalMs: 500,
       mode: DEFAULT_SETTINGS.mode,
+      autoUpdateCheck: DEFAULT_SETTINGS.autoUpdateCheck,
     });
   });
 
@@ -64,11 +68,13 @@ describe('settings coercion', () => {
       theme: 'light',
       intervalMs: DEFAULT_SETTINGS.intervalMs,
       mode: DEFAULT_SETTINGS.mode,
+      autoUpdateCheck: DEFAULT_SETTINGS.autoUpdateCheck,
     });
     expect(coerce({ theme: 'light', intervalMs: '1000' })).toEqual({
       theme: 'light',
       intervalMs: DEFAULT_SETTINGS.intervalMs,
       mode: DEFAULT_SETTINGS.mode,
+      autoUpdateCheck: DEFAULT_SETTINGS.autoUpdateCheck,
     });
   });
 
@@ -88,6 +94,7 @@ describe('settings coercion', () => {
       theme: 'light',
       intervalMs: 500,
       mode: DEFAULT_SETTINGS.mode,
+      autoUpdateCheck: DEFAULT_SETTINGS.autoUpdateCheck,
     });
   });
 
@@ -97,7 +104,38 @@ describe('settings coercion', () => {
       theme: 'dark',
       intervalMs: 2000,
       mode: 'developer',
+      autoUpdateCheck: DEFAULT_SETTINGS.autoUpdateCheck,
     });
+  });
+
+  it('defaults automatic update checking on', () => {
+    // The one setting that governs a network request. On by default is a
+    // deliberate product decision (docs/UPDATES.md), so it is pinned here:
+    // flipping it should require changing a test that says why.
+    expect(DEFAULT_SETTINGS.autoUpdateCheck).toBe(true);
+    expect(coerce({}).autoUpdateCheck).toBe(true);
+  });
+
+  it('honours an explicit opt-out', () => {
+    expect(coerce({ autoUpdateCheck: false }).autoUpdateCheck).toBe(false);
+  });
+
+  it('reads a settings file written before the updater existed', () => {
+    // Every install that upgrades into the updater has one of these: a stored
+    // object with no `autoUpdateCheck` key at all. It must land on the same
+    // answer a fresh install gets, not on `undefined`.
+    const migrated = coerce({ theme: 'dark', intervalMs: 2000, mode: 'system' });
+    expect(migrated.autoUpdateCheck).toBe(DEFAULT_SETTINGS.autoUpdateCheck);
+  });
+
+  it('refuses a non-boolean opt-out rather than trusting it', () => {
+    // A hand-edited `"false"` is not false, and treating it as such would
+    // silently disable checks for someone who never asked.
+    for (const rogue of ['false', 0, null, {}]) {
+      expect(coerce({ autoUpdateCheck: rogue }).autoUpdateCheck).toBe(
+        DEFAULT_SETTINGS.autoUpdateCheck,
+      );
+    }
   });
 
   it('ignores extra keys rather than passing them through', () => {
@@ -105,6 +143,7 @@ describe('settings coercion', () => {
       theme: 'dark',
       intervalMs: 1000,
       mode: DEFAULT_SETTINGS.mode,
+      autoUpdateCheck: DEFAULT_SETTINGS.autoUpdateCheck,
     });
   });
 });

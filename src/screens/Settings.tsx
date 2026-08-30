@@ -3,7 +3,9 @@ import { IS_DEV, MODULES } from '../config/flags';
 import { BACKEND } from '../lib/ipc';
 import { INTERVALS, THEME_LABELS, THEMES } from '../lib/settings';
 import { Card, Chip, Note, PageHeader, SettingRow } from '../components/ui';
+import { UpdateCard } from '../components/UpdateCard';
 import { useAppVersion } from '../hooks/useAppVersion';
+import type { Updates } from '../hooks/useUpdates';
 
 /**
  * Settings.
@@ -22,14 +24,28 @@ interface Props {
   onThemeChange: (t: Theme) => void;
   intervalMs: number;
   onIntervalChange: (ms: number) => void;
+  updates: Updates;
+  autoUpdateCheck: boolean;
+  onAutoUpdateCheckChange: (on: boolean) => void;
 }
 
-export function Settings({ theme, onThemeChange, intervalMs, onIntervalChange }: Props) {
+export function Settings({
+  theme,
+  onThemeChange,
+  intervalMs,
+  onIntervalChange,
+  updates,
+  autoUpdateCheck,
+  onAutoUpdateCheckChange,
+}: Props) {
   const version = useAppVersion();
 
   return (
     <div className="ld-fade-in overflow-auto px-6 py-5">
-      <PageHeader title="Settings" subtitle="Local only. Nothing here leaves this machine." />
+      <PageHeader
+        title="Settings"
+        subtitle="Stored on this machine. The only thing LocalDocks sends anywhere is an update check, and you control it below."
+      />
 
       <div className="mt-5 flex max-w-[680px] flex-col gap-[11px]">
         <Card className="px-4 py-3.5">
@@ -114,6 +130,12 @@ export function Settings({ theme, onThemeChange, intervalMs, onIntervalChange }:
             </SettingRow>
           </Card>
         )}
+
+        <UpdateCard
+          updates={updates}
+          autoCheck={autoUpdateCheck}
+          onAutoCheckChange={onAutoUpdateCheckChange}
+        />
 
         <Card className="px-4 py-3.5">
           <h2 className="mb-2 text-[12.5px] font-semibold">About</h2>

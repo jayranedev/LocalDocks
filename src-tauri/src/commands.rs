@@ -4,13 +4,14 @@
 //! and a call into the sampler. If one of these ever needs a test of its own,
 //! logic has leaked into it and belongs in `logic/` or `sampler`.
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::errors::SystemError;
 use crate::logic::identity;
 use crate::models::{FieldState, ProcessDetail, ProcessId, Snapshot, TerminateResult};
 use crate::platform::windows::control;
 use crate::sampler::Sampler;
+use crate::updates::{self, PendingUpdate, UpdateCapability, UpdateCheck};
 
 /// Return the current snapshot.
 ///
@@ -80,4 +81,43 @@ pub fn terminate_process(pid: u32, started_at: String) -> TerminateResult {
 #[tauri::command]
 pub fn open_external(url: String) -> Result<(), SystemError> {
     control::open_external(&url)
+}
+
+/// What this installation can do about updates, and which version it is.
+///
+/// Answered from process state alone — no network, no filesystem — so the UI
+/// can decide at startup whether an update section is meaningful at all. An
+/// MSIX install reports `managedByStore` and the frontend shows a sentence
+/// instead of a button.
+#[tauri::command]
+pub fn update_capability(app: AppHandle) -> UpdateCapability {
+    updates::capability(&app)
+}
+
+/// Check the release feed for a newer stable version.
+///
+/// Infallible by construction: every network and parsing failure is a
+/// `failed` variant rather than a rejected promise, because a GitHub outage is
+/// not an error in a process monitor. See `updates` for what the feed is and
+/// why `/releases/latest` is the stable channel.
+#[tauri::command]
+pub async fn check_for_update(
+    app: AppHandle,
+    pending: State<'_, PendingUpdate>,
+) -> Result<UpdateCheck, ()> {
+    Ok(updates::check(&app, &pending).await)
+}
+
+/// Install the update the last check approved.
+///
+/// Only ever installs the artifact `check_for_update` already found, verified
+/// and showed the user — this command chooses nothing and downloads nothing of
+/// its own. On Windows the updater plugin hands off to the installer and exits
+/// the process on success.
+#[tauri::command]
+pub async fn install_update(
+    app: AppHandle,
+    pending: State<'_, PendingUpdate>,
+) -> Result<(), String> {
+    updates::install(&app, &pending).await
 }

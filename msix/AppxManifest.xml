@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  LocalDocks — Microsoft Store package manifest.
+
+  Tauri does not produce MSIX. This manifest, plus scripts/package-msix.ps1,
+  is the packaging step that turns the release build into something Partner
+  Center will accept.
+
+  Every value in <Identity> is reserved and assigned by the Store. They are
+  not free text and must not be "corrected" to look tidier — a single
+  character wrong here produces a package Partner Center rejects. They are
+  recorded in docs/STORE-LISTING.md alongside where each one came from.
+
+  Note what is NOT here: no internetClient, no capability beyond runFullTrust.
+  A packaged LocalDocks makes no network requests at all — the update channel
+  detects package identity at startup and stands down, because the Store owns
+  updates for this channel (src-tauri/src/platform/windows/packaging.rs).
+-->
+
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <!--
+    Version is four parts because MSIX requires four. The fourth (revision)
+    stays 0: Partner Center reserves it and rejects a package that sets it.
+    The first three track src-tauri/Cargo.toml, which remains the single
+    source of the version — scripts/package-msix.ps1 reads it from there
+    rather than letting this file drift.
+  -->
+  <Identity
+    Name="JayRane.LocalDocks"
+    Publisher="CN=B46AFC48-B984-41DB-941B-581ABF4CCE85"
+    Version="0.9.0.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>LocalDocks</DisplayName>
+    <PublisherDisplayName>Jay Rane</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!--
+      1809 (17763) is the floor stated in the README and enforced here. It is
+      the earliest Windows 10 where the WebView2 runtime is supported, and
+      LocalDocks is a WebView2 application.
+
+      MaxVersionTested is the build this package was actually built and
+      exercised on. It is a claim about testing, so it tracks reality rather
+      than being set to the newest number available.
+    -->
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.17763.0"
+      MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <!--
+      Windows.FullTrustApplication: LocalDocks is a Win32 desktop application
+      that reads processes and sockets through Win32 APIs. It is not a UWP app
+      and does not become one by being packaged.
+    -->
+    <Application
+      Id="LocalDocks"
+      Executable="LocalDocks.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="LocalDocks"
+        Description="See the services, processes and listening ports you own, alongside system telemetry."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <!--
+          Small tile only. The large (310x310) tile is deliberately not
+          declared: the manifest schema requires a Wide310x150Logo alongside
+          it, and the wide tile is a Windows 8 era concept that Windows 11 no
+          longer surfaces. Declaring one would mean shipping and maintaining an
+          asset nothing renders. makeappx rejects the package outright if the
+          large tile is declared without the wide one, which is how this was
+          found rather than assumed.
+        -->
+        <uap:DefaultTile Square71x71Logo="Assets\Square71x71Logo.png">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo" />
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile>
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!--
+      The only capability, and the only one a full-trust desktop application
+      needs. It is a restricted capability, which means Partner Center asks
+      why it is declared; the answer is that this is a Win32 desktop app
+      packaged for the Store, which is the documented use.
+
+      Deliberately absent: internetClient. A packaged LocalDocks does not make
+      network requests. If that ever stops being true, this list must change
+      in the same commit as the behaviour.
+    -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+</Package>

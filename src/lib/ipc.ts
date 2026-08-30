@@ -4,6 +4,8 @@ import type {
   Snapshot,
   TerminateRequest,
   TerminateResult,
+  UpdateCapability,
+  UpdateCheck,
 } from '../types';
 import { buildDetail, buildSnapshot, mockTerminate } from './mock';
 
@@ -188,4 +190,53 @@ export async function openExternal(url: string): Promise<void> {
 
 export async function copyText(text: string): Promise<void> {
   await navigator.clipboard.writeText(text);
+}
+
+/**
+ * What this installation can do about updates.
+ *
+ * The backend answers from process state — whether it is running with MSIX
+ * package identity — so the UI never has to guess which channel it came from.
+ * A browser dev session reports `managedByStore`, because there is no
+ * installation to update and pretending otherwise would put a live-looking
+ * button in front of nothing.
+ */
+export async function getUpdateCapability(): Promise<UpdateCapability> {
+  if (!IS_TAURI) {
+    return { managedByStore: true, currentVersion: '0.0.0-dev' };
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<UpdateCapability>('update_capability');
+}
+
+/**
+ * Ask GitHub whether a newer stable release exists.
+ *
+ * The command is infallible by construction — every network and parsing
+ * failure arrives as a `failed` variant — but this still catches, because an
+ * IPC layer that cannot be reached at all is a different failure from one that
+ * answered honestly, and neither should break a running app.
+ */
+export async function checkForUpdate(): Promise<UpdateCheck> {
+  if (!IS_TAURI) {
+    return { kind: 'unsupported', reason: 'Updates are unavailable in a browser session.' };
+  }
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<UpdateCheck>('check_for_update');
+  } catch {
+    return { kind: 'failed', reason: 'Could not reach GitHub to check for updates.' };
+  }
+}
+
+/**
+ * Install the update the last check approved and restart into it.
+ *
+ * Resolves only on failure: a successful install replaces this process, so
+ * nothing here runs afterwards. The string it rejects with is displayable.
+ */
+export async function installUpdate(): Promise<void> {
+  if (!IS_TAURI) throw new Error('Updates are unavailable in a browser session.');
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('install_update');
 }

@@ -34,35 +34,62 @@ orphan every existing user's settings.
 
 ---
 
-## 2 · The blocker: there is no package to submit — **BLOCKED**
+## 2 · The package — **BUILT LOCALLY**
 
-The Store accepts **MSIX**. Tauri produces **NSIS** and **WiX MSI**, and neither
-is submittable. This is not a configuration gap in `tauri.conf.json`; the target
-does not exist.
+The Store accepts **MSIX**. Tauri produces **NSIS**, and an NSIS `.exe` cannot
+be submitted. That gap is now closed inside this repository rather than left as
+a manual step:
 
-Producing the MSIX is real work outside this repository:
+| File | What it is |
+|---|---|
+| [`msix/AppxManifest.xml`](../msix/AppxManifest.xml) | The package manifest, with the reserved identity from section 1 |
+| [`scripts/package-msix.ps1`](../scripts/package-msix.ps1) | Lays out the release binary and logos, substitutes the version from `Cargo.toml`, packs with `makeappx` |
+| [`scripts/validate-msix.ps1`](../scripts/validate-msix.ps1) | Test-signs, installs and runs the Windows App Certification Kit — **elevated** |
 
-1. Author an `AppxManifest.xml` whose `<Identity>` carries
-   `Name="JayRane.LocalDocks"`,
-   `Publisher="CN=B46AFC48-B984-41DB-941B-581ABF4CCE85"` and a four-part
-   `Version` (`0.9.0.0`; Partner Center rejects a non-zero revision field, so
-   the fourth part stays `0`).
-2. Lay out the payload: `LocalDocks.exe` plus the `Assets\` logos.
-3. `makeappx pack` — or drive the whole thing with the MSIX Packaging Tool.
-4. Validate with the **Windows App Certification Kit** before uploading.
-5. Upload to Partner Center, which signs Store submissions with the publisher
-   certificate itself (see [`docs/CODE-SIGNING.md`](CODE-SIGNING.md)).
+```powershell
+npx tauri build
+./scripts/package-msix.ps1
+#  -> .release/msix/LocalDocks_0.9.0.0_x64.msix
+```
 
-**No MSIX and no manifest exist in this repository, and none has been
-fabricated.** A manifest that has never been packed or validated is a claim the
-product cannot support.
+The output is **unsigned, deliberately**. Partner Center signs Store
+submissions with the publisher certificate itself, so an unsigned package is
+what you upload. `package-msix.ps1 -Sign` exists only to make the file
+installable on this machine for validation, using a throwaway certificate;
+a package signed that way must never be submitted.
 
-An MSIX also changes runtime behaviour that this build has never been tested
-under — package identity, a virtualised registry and a redirected
-`%LOCALAPPDATA%`. Settings persistence, the log directory and the process
-enumeration path all need re-testing inside the package, not just outside it.
+### What the manifest declares, and what it does not
 
----
+| | |
+|---|---|
+| Identity | `JayRane.LocalDocks`, `CN=B46AFC48-…`, `0.9.0.0`, `x64` |
+| Version | Four parts because MSIX requires four. The fourth stays `0` — Partner Center reserves it |
+| Application | `Windows.FullTrustApplication` running `LocalDocks.exe`. It is a Win32 app and does not become a UWP app by being packaged |
+| Min Windows | `10.0.17763.0` — Windows 10 1809, the floor the README states and the earliest WebView2 supports |
+| MaxVersionTested | `10.0.26100.0` — the build it was actually packaged and exercised on, not the newest number available |
+| Capabilities | **`runFullTrust` and nothing else** |
+
+The capability list is worth a sentence of its own. `runFullTrust` is a
+restricted capability, so Partner Center will ask why it is declared; the
+answer is that this is a Win32 desktop application packaged for the Store,
+which is the documented use. **`internetClient` is deliberately absent**: a
+packaged LocalDocks makes no network requests at all, because the update
+channel detects package identity at startup and stands down
+([UPDATES.md](UPDATES.md)). If that ever stops being true, the manifest must
+change in the same commit as the behaviour.
+
+### What still has to happen off this machine
+
+Packaging is solved. Two things are not:
+
+1. **Certification.** `scripts/validate-msix.ps1` runs the App Certification
+   Kit, and both installing a test-signed MSIX and running `appcert.exe`
+   require **administrator rights**. It has not been run.
+2. **Runtime behaviour under package identity.** An MSIX brings a virtualised
+   registry and a redirected `%LOCALAPPDATA%`. Settings persistence, the log
+   directory and process enumeration all need re-testing *inside* the package,
+   not just outside it. The one thing already proven by construction is that
+   the app detects the package and disables its own updater.
 
 ## 3 · Listing text — written, ready to paste
 
@@ -120,6 +147,79 @@ Developer tools
 `ports` · `localhost` · `process monitor` · `dev server` · `port conflict` ·
 `developer dashboard` · `system monitor` · `netstat`
 
+### Age rating
+
+The questionnaire is short for a tool with no user-generated content, no
+communication features, no purchases and no gambling. The answers, all of which
+follow from what the app does:
+
+| Question | Answer |
+|---|---|
+| Violence, sexual content, profanity, controlled substances | No |
+| User-generated content, chat, or user-to-user communication | No |
+| Shares user location, personal information, or contacts | No |
+| In-app purchases, adverts, loot boxes | No |
+| Collects or transmits personal information | No |
+| Unrestricted internet access | No — one request to one fixed public URL, off in the Store build |
+
+Expected outcome: the lowest available rating. Answer the questionnaire itself;
+do not paste this table into Partner Center as if it were the submission.
+
+### Supported devices and architectures
+
+| | |
+|---|---|
+| Device family | `Windows.Desktop` only |
+| Architecture | **x64 only** |
+| Minimum | Windows 10 version 1809 (build 17763) |
+
+No arm64 build. LocalDocks reads processes and sockets through Win32 APIs and
+has never been compiled or tested for arm64, so claiming it would be a claim
+the product cannot support. It is a genuine gap for Windows-on-ARM machines and
+is worth doing later; it is not a V1 blocker.
+
+### URLs and legal
+
+| Field | Value | Status |
+|---|---|---|
+| Support contact | `https://github.com/jayranedev/LocalDocks/issues` | Exists once the repository is public |
+| Website | `https://localdocks.jayrane.dev` | **Being built separately** — a Store listing may omit it |
+| Privacy policy | — | **REQUIRED, DOES NOT EXIST** (section 4) |
+| Copyright | `Copyright (c) 2026 Silent Minds` | Matches `tauri.conf.json` |
+| Licence | MIT | `LICENSE`, plus `THIRD-PARTY-NOTICES.md` for IBM Plex (OFL-1.1) |
+
+### What's new in this version
+
+For the first submission this is the release summary, not a changelog:
+
+> First release. LocalDocks shows the services, processes and listening ports
+> you own, alongside CPU, memory, network, storage, GPU and thermal telemetry
+> for the machine. Developer mode narrows everything to your development work.
+
+Later versions take the matching section from `CHANGELOG.md`.
+
+### Certification notes for the reviewer
+
+Worth writing in the submission's notes box, because a reviewer will otherwise
+have to guess why a process monitor exists:
+
+> LocalDocks is a developer tool. It enumerates the current user's own
+> processes and listening sockets using standard Win32 APIs
+> (`CreateToolhelp32Snapshot`, `GetExtendedTcpTable`, `GetExtendedUdpTable`)
+> and reads machine-wide performance counters through PDH. It runs entirely
+> unelevated and never requests administrator rights or `SeDebugPrivilege`, so
+> it can only observe processes owned by the signed-in user.
+>
+> `runFullTrust` is declared because this is a Win32 desktop application
+> packaged for the Store. No other capability is declared.
+>
+> The Store build makes no network requests. The app detects package identity
+> at startup and disables its own update channel, leaving updates to the Store.
+>
+> The "End process" action terminates a process the user selected and owns,
+> after re-verifying its identity (PID plus creation time) so a recycled PID
+> cannot be terminated by mistake.
+
 ### System requirements
 
 Windows 10 version 1809 (build 17763) or later, x64, with the Microsoft Edge
@@ -138,10 +238,19 @@ than copied forward from here.
 | Partner Center question | Answer |
 |---|---|
 | Does this app collect personal information? | **No** |
-| Does it transmit data off the device? | **No — it has no network client** |
+| Does it transmit data off the device? | **No.** The Store build makes no network requests at all |
 | Does it use advertising identifiers? | **No** |
 | Does it require an account? | **No** |
+| Does it collect analytics or crash reports? | **No** |
 | Privacy policy URL | **REQUIRED, DOES NOT EXIST YET** |
+
+**On the update check.** The GitHub build makes one kind of request: a `GET`
+for a public release manifest, at most once a day, carrying no body and no
+identifier. **The Store build makes none** — it detects package identity and
+disables the update channel, because the Store owns updates there. So for the
+Store submission the honest answer to "does it transmit data off the device" is
+plainly No, and the privacy policy still has to describe the GitHub build,
+because the same source produces both.
 
 Partner Center requires a reachable privacy-policy URL for a submission even
 when the honest answer to every question above is "nothing". A page saying
@@ -220,24 +329,24 @@ screenshot sets. LocalDocks is Windows-desktop only.
 
 ## 6 · What is left, and who has to do it
 
-Everything in this section happens **outside this repository** and cannot be
-automated from it.
+Packaging, listing text, privacy answers, age-rating answers, screenshots and
+logos are all done and in this repository. What remains is genuinely external.
 
-| # | Step | Where | Blocked on |
+| # | Step | Where | Needs |
 |---|---|---|---|
-| 1 | Publish a privacy-policy page and get its URL | Anywhere stable | A hosting decision |
-| 2 | Produce and validate the MSIX | Local, with the Windows SDK | Step 1 is independent; this one is the real work |
-| 3 | Create the submission and enter the listing text from section 3 | Partner Center | Manual |
-| 4 | Upload the screenshots from section 5 | Partner Center | Manual |
-| 5 | Complete the age-rating questionnaire | Partner Center | Manual — a developer tool with no user content, so the questionnaire is short |
-| 6 | Answer the privacy questions from section 4 | Partner Center | Manual |
-| 7 | Upload the MSIX; Partner Center signs it | Partner Center | Step 2 |
-| 8 | Submit for certification | Partner Center | All of the above |
+| 1 | Publish a privacy-policy page and get its URL | Wherever the site lives | A hosting decision. Nothing has to be *decided* — the answer is "nothing is collected" — only published |
+| 2 | Run `scripts/validate-msix.ps1` | **Elevated** PowerShell on this machine | Administrator rights. Installing a test-signed MSIX and running `appcert.exe` both require them |
+| 3 | Fix anything the App Certification Kit reports | This repository | Step 2 first |
+| 4 | Smoke-test the app *inside* the package | This machine | Step 2 installs it. Virtualised registry and redirected `%LOCALAPPDATA%` are the parts that have never run |
+| 5 | Create the submission and paste the listing text from section 3 | Partner Center | Manual |
+| 6 | Upload the six screenshots named in section 5 | Partner Center | Manual |
+| 7 | Complete the age-rating questionnaire using section 3 | Partner Center | Manual |
+| 8 | Answer the privacy questions from section 4, with the URL from step 1 | Partner Center | Steps 1 |
+| 9 | Upload `LocalDocks_0.9.0.0_x64.msix` — the **unsigned** one | Partner Center | Steps 2–4 |
+| 10 | Paste the certification notes from section 3 and submit | Partner Center | Everything above |
 
 **Nothing in this repository is waiting on anything.** The Store track is
-blocked entirely on the MSIX and on a published privacy-policy URL.
-
----
+blocked on an elevated certification run and a published privacy-policy URL.
 
 ## Sources
 

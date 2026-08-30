@@ -18,6 +18,14 @@ export interface Settings {
   theme: Theme;
   intervalMs: number;
   mode: AppMode;
+  /**
+   * Whether LocalDocks may contact GitHub to look for a newer release.
+   *
+   * The only setting in this app that governs a network request, which is why
+   * it is a setting at all. Off means no automatic check ever runs; the manual
+   * "Check now" button still works, because pressing it is consent.
+   */
+  autoUpdateCheck: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -26,6 +34,10 @@ export const DEFAULT_SETTINGS: Settings = {
   /* Developer is the default: the app is for watching your own services, and
      the full machine view is one switch away. */
   mode: 'developer',
+  /* On by default. A security fix nobody hears about is not a fix, and this is
+     distributed outside any store that would push one. It is one toggle away,
+     the check is once a day, and what it sends is a GET to a public URL. */
+  autoUpdateCheck: true,
 };
 
 export const MODES: AppMode[] = ['system', 'developer'];
@@ -65,7 +77,15 @@ function coerce(raw: unknown): Settings {
     ? (obj.mode as AppMode)
     : DEFAULT_SETTINGS.mode;
 
-  return { theme, intervalMs, mode };
+  // Absent in settings written before the updater existed — the common case
+  // on first launch after upgrading into it. Falls through to the default,
+  // which is the same answer a fresh install gets.
+  const autoUpdateCheck =
+    typeof obj.autoUpdateCheck === 'boolean'
+      ? obj.autoUpdateCheck
+      : DEFAULT_SETTINGS.autoUpdateCheck;
+
+  return { theme, intervalMs, mode, autoUpdateCheck };
 }
 
 export function loadSettings(): Settings {

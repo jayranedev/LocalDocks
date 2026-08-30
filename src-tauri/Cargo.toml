@@ -53,6 +53,18 @@ log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 
+# The update channel (docs/UPDATES.md). The plugin is the officially supported
+# mechanism for this Tauri version; a hand-rolled downloader would have to
+# reimplement minisign verification, and getting that subtly wrong is how an
+# update channel becomes a code-execution channel.
+tauri-plugin-updater = "2"
+
+# Version comparison for the update policy in `logic::release`. The updater
+# plugin does its own semver check, but the *policy* — never downgrade, never
+# offer a prerelease on the stable channel — is ours, is testable, and is
+# enforced on our side of the plugin.
+semver = "1"
+
 # Win32 bindings. Windows-gated so the dependency is not even resolved for
 # another target, and feature-gated down to the three namespaces process
 # discovery actually calls into: the crate is enormous and every feature is
@@ -78,6 +90,9 @@ tauri-plugin-log = "2"
 #   Win32_System_Performance            PDH, the only unelevated route to GPU
 #                                       and ACPI thermal readings
 #   Win32_Graphics_Dxgi                 EnumAdapters1, for adapter identity
+#   Win32_Storage_Packaging_Appx        GetCurrentPackageFullName, which is how
+#                                       the app knows it is running from an
+#                                       MSIX and must leave updates to the Store
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
   "Wdk_System_SystemInformation",
@@ -89,6 +104,7 @@ windows = { version = "0.62.2", features = [
   "Win32_Networking_WinSock",
   "Win32_Security",
   "Win32_Storage_FileSystem",
+  "Win32_Storage_Packaging_Appx",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_IO",
   "Win32_System_Ioctl",
@@ -99,3 +115,29 @@ windows = { version = "0.62.2", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+# ---------------------------------------------------------------------------
+# Release profile
+#
+# `strip` removes the symbol table from the shipped binary.
+#
+# What it does NOT remove, and what caught us out: the source path of every
+# `panic!` site and every `#[track_caller]` call is embedded as an ordinary
+# static string, not as debug information. Unaddressed, LocalDocks.exe carried
+# 898 copies of
+#
+#   C:\Users\<developer>\.cargo\registry\src\index.crates.io-.../<crate>/...
+#
+# and shipped the build machine's user name to everyone who installed it.
+#
+# The fix is `--remap-path-prefix`, set in scripts/build-release.ps1 from the
+# building machine's own environment. It cannot live here: the flag needs
+# absolute paths, and writing an absolute path into a committed file would put
+# a developer's home directory in the repository to keep it out of the binary.
+#
+# (Cargo's `trim-paths` profile key does exactly this and needs no absolute
+# paths, but it is still unstable as of Cargo 1.95 and hard-errors the build.
+# Move to it when it lands.)
+# ---------------------------------------------------------------------------
+[profile.release]
+strip = true

@@ -24,6 +24,7 @@ export type IconName =
   | 'lock'
   | 'refresh'
   | 'chevron'
+  | 'download'
   | 'check';
 
 const PATHS: Record<IconName, React.ReactNode> = {
@@ -123,6 +124,13 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   chevron: <path d="m9 6 6 6-6 6" />,
+  download: (
+    <>
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M4 20h16" />
+    </>
+  ),
   check: <path d="m5 12.5 4.5 4.5L19 7" />,
 };
 

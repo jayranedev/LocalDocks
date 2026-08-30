@@ -56,7 +56,8 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 | No secrets | **DONE** | 133 tracked files and all 33 reachable commits scanned; no secrets, no IP addresses, no credentials |
 | Minimal capabilities | **DONE** | `core:default` only; no fs, shell, http or dialog plugin |
 | CSP | **DONE** | Was `null`; now `default-src 'self'` with `object-src 'none'` |
-| No remote telemetry | **DONE** | No network client in the dependency tree |
+| No remote telemetry | **DONE** | One outbound request exists — the update check — and it uploads nothing. No analytics, no crash reporter, no identifier |
+| Update channel | **DONE** | Signature-verified, stable-only, no-downgrade; 13 policy tests plus a full local install/restart run |
 
 ## Packaging
 

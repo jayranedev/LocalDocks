@@ -85,8 +85,16 @@ string; no shell is invoked.
 triggers a scan. Measured at roughly 13 ms per tick and 0.09% CPU at idle. Three
 themes: Local Dark, Dark and Light.
 
-**Sends nothing anywhere.** No network client, no analytics, no crash reporter,
-no account.
+**Sends one thing, and only if you let it.** LocalDocks makes exactly one kind
+of network request: a `GET` to GitHub's public release feed to see whether a
+newer version exists. It is a single toggle in Settings, it runs at most once a
+day and never during startup, and it carries nothing but the request itself —
+no identifier, no machine information, no usage data. Everything the app
+measures stays on your machine.
+
+No analytics, no crash reporter, no account, and no other network access of any
+kind. A copy installed from the Microsoft Store makes no requests at all: the
+Store owns updates there, and LocalDocks detects that and stands down.
 
 ## Roadmap
 
