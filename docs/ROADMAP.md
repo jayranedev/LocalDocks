@@ -486,7 +486,7 @@ Before making it public, in order:
 | 4 | Dependency and licence review | **DONE** — 6 Rust and 5 runtime npm dependencies, all MIT / Apache-2.0 / OFL-1.1 |
 | 5 | Microsoft Store package review | **BLOCKED** — Tauri produces NSIS, not MSIX; see docs/RELEASE.md |
 | 6 | Documentation review against the actual repository | **DONE** |
-| 7 | Screenshot sanitisation — real machines contain real names | **NOT STARTED** — no screenshots exist yet |
+| 7 | Screenshot sanitisation — real machines contain real names | **DONE** — 13 frames from a sanitised demo environment; checks in docs/assets/screenshots/README.md |
 | 8 | Release build verification | **DONE** — see docs/RELEASE.md |
 
 **The one history finding.** A classifier test carried a real command line

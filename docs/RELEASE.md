@@ -157,17 +157,83 @@ is ever added it will be opt-in and announced, not switched on quietly.
 
 ---
 
-## 4 · Demo environment for screenshots — **NOT DONE**
+## 4 · Demo environment and screenshots — **DONE**
 
-No screenshots exist yet, and none may be taken from the development machine:
-its process list contains real project names, real usernames and real private
-infrastructure.
+No image may be taken from the development machine as it stands: its process
+list contains real project names, real usernames and real private
+infrastructure. So none was.
 
-`scripts/demo-environment.md` describes a reproducible, sanitised environment to
-capture from instead. Every service in it uses a generic name, a generic path
-and a loopback address.
+`scripts/demo-environment.ps1` starts a reproducible, sanitised environment —
+six **real** processes (two Vite dev servers, a Uvicorn-signature Python
+service, a Celery-signature Python worker with no socket at all, `mongod`, and
+`adb`) under generic `C:\localdocks-demo\` paths, on deliberately unusual
+ports. Nothing is simulated and no port is hardcoded into the product to make
+the demo work; the classifier recognises all of them on ports no convention
+would.
+
+`scripts/capture-screenshots.mjs` then drives the **installed production build**
+over the Chrome DevTools Protocol and writes thirteen 2560 × 1600 frames to
+`docs/assets/screenshots/`. One pipeline, one viewport, reproducible.
 
 The rule, from docs/ROADMAP.md and unchanged: **every image everywhere comes
 from one pipeline capturing the real application.** No mockups. A screenshot
 that cannot be produced by running the app is a claim the product cannot
 support.
+
+Sanitisation, the checks applied and the two cases that needed a deliberate
+decision are documented in `docs/assets/screenshots/README.md`. The most
+important of them: the System-mode socket table exposes the capture machine's
+LAN address, so that frame is narrowed to loopback through the screen's own
+search box — and the capture script asserts no routable address is on screen
+before it will write the file.
+
+---
+
+## 5 · Code signing — **NOT DONE**, deliberately
+
+The build is unsigned. No certificate has been bought and no account created.
+
+The Store channel does not need one — Partner Center signs submissions with the
+account's publisher certificate — so signing matters only for the standalone
+installer on GitHub. The options, what each actually costs, the SmartScreen
+reality, and the exact `tauri.conf.json` keys for both signing routes are in
+**[CODE-SIGNING.md](CODE-SIGNING.md)**.
+
+The recommendation there, in one line: ship v0.9.0 unsigned and visibly so,
+publish the SHA-256, and resolve Azure Trusted Signing eligibility before
+spending anything.
+
+---
+
+## 6 · Updates — **DEFERRED**, with the decision written down
+
+There is no in-app updater and none was added during release preparation.
+Upgrading means running a newer installer over the top, which is verified to
+work.
+
+The reason it is not a quick win: LocalDocks currently has **no network client
+at all**, and that is a claim made in the Settings screen, the README, the Store
+listing and the security checklist. Adding an updater is not just a dependency;
+it is a change to a promise. **[UPDATES.md](UPDATES.md)** reviews the options
+against this architecture, records the constraint that an MSIX in the Store must
+not self-update, and recommends a check-only, opt-in, default-off step as the
+first move — not a full auto-installer in the same pass that first publishes the
+application.
+
+---
+
+## 7 · Store submission — see STORE-LISTING.md
+
+Listing text, the privacy answers, the reserved identity values, the screenshot
+selection and the exact list of manual Partner Center steps are in
+**[STORE-LISTING.md](STORE-LISTING.md)**. The blocker is unchanged and is
+restated there: the Store needs an MSIX, and Tauri does not produce one.
+
+---
+
+## 8 · GitHub release — prepared, not published
+
+**[releases/v0.9.0.md](releases/v0.9.0.md)** holds the release body, the asset
+list, the checksum procedure and the nine-step order of operations. No tag
+exists, no release has been created, and `feature/release-hardening` has not
+been pushed.

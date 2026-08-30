@@ -40,9 +40,9 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 | Shutdown | **DONE** | Graceful close; no orphan WebView2 processes |
 | Restart | **DONE** | Relaunch clean; settings restored |
 | Failure recovery | **DONE** | A listener killed mid-observation; app survived, memory and handles flat |
-| Long-run stability | **IN PROGRESS** | 3-hour run; see the measurements section of the final report |
-| No memory leak | **DONE (so far)** | 36.3 → 36.9 MB over the observed window |
-| No handle leak | **DONE (so far)** | 386 → 388 handles, non-monotonic |
+| Long-run stability | **DONE** | ~6 h wall clock including a sleep/resume cycle; working set 42.8 → 42.7 MB, handles 388 → 390 |
+| No memory leak | **DONE** | Working set non-monotonic within a 1 MB band across the full run |
+| No handle leak | **DONE** | 384–390 handles across the full run, non-monotonic |
 
 ## Security
 
@@ -71,7 +71,8 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 | Icon | **DONE** | Shortcut resolves to the executable's embedded icon |
 | Version | **DONE** | One source; installer, binary, registry and About screen agree |
 | Architecture | **DONE** | x64 |
-| Code signing | **NOT DONE** | No certificate. SmartScreen will warn on first download |
+| Updates | **DEFERRED** | No in-app updater; upgrade-over-the-top verified. Reasoning in docs/UPDATES.md |
+| Code signing | **NOT DONE** | No certificate, deliberately. Options, costs and both config routes in docs/CODE-SIGNING.md |
 
 ## Open source
 
@@ -84,6 +85,7 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 | Security policy | **DONE** | SECURITY.md |
 | No private data | **PARTIAL** | Working tree clean; one string remains in commit `1339aae` |
 | Dependency audit | **DONE** | 6 Rust, 5 runtime npm; all MIT / Apache-2.0 / OFL-1.1; 0 vulnerabilities |
+| Changelog | **DONE** | CHANGELOG.md, Keep a Changelog format |
 | Third-party attribution | **DONE** | THIRD-PARTY-NOTICES.md; IBM Plex OFL-1.1 attributed |
 
 ## Store
@@ -94,17 +96,17 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 | Publisher | **BLOCKED** | Same |
 | Version | **DONE** | `0.9.0`, and MSIX-compatible as `0.9.0.0` |
 | Package validation | **BLOCKED** | Needs an MSIX to run the App Certification Kit against |
-| Screenshots | **NOT DONE** | Plan written; none captured |
-| Metadata | **NOT DONE** | Store listing text not written |
-| Privacy information | **NOT DONE** | Trivial to answer — nothing is collected — but not filled in |
+| Screenshots | **DONE** | 13 × 2560×1600 from the installed build via one pipeline; sanitisation documented |
+| Metadata | **DONE** | Listing text, category and search terms written; docs/STORE-LISTING.md § 3 |
+| Privacy information | **PARTIAL** | Every Partner Center answer written; the required privacy-policy **URL** does not exist yet |
 | System requirements | **DONE** | Stated in the README |
 
 ## Launch
 
 | Item | Status |
 |---|---|
-| GitHub release | **NOT DONE** |
+| GitHub release | **PREPARED** — body, assets and procedure in docs/releases/v0.9.0.md; nothing tagged or published |
 | Store release | **BLOCKED** |
 | Website | **DEFERRED** — deliberately last |
-| Screenshots | **NOT DONE** |
-| Launch assets | **NOT DONE** |
+| Screenshots | **DONE** |
+| Launch assets | **NOT DONE** — nothing beyond the screenshot set; not required for a GitHub release |

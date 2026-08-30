@@ -8,11 +8,22 @@ Instead of searching through Task Manager or repeatedly using terminal commands 
 
 ## Status
 
-**V1 is functionally complete and in release-candidate hardening.** Version
-`0.9.0` builds a working, installable Windows package. It is not yet released:
-packaging for the Microsoft Store, code signing and the public repository audit
-are outstanding. See [docs/RELEASE.md](docs/RELEASE.md) for exactly what is done
-and what is not.
+**V1 is functionally complete and hardened. Version `0.9.0` is a release
+candidate.** It builds a working, installable Windows package that has been
+verified installed, not just tested in a dev loop.
+
+It is **not released yet**. Three things are outstanding, and each is written up
+rather than glossed:
+
+- **Microsoft Store** — blocked on an MSIX package, which Tauri does not
+  produce ([docs/STORE-LISTING.md](docs/STORE-LISTING.md))
+- **Code signing** — none, deliberately; SmartScreen will warn on first run
+  ([docs/CODE-SIGNING.md](docs/CODE-SIGNING.md))
+- **Public repository** — the history audit is the gate, and one finding remains
+  ([docs/ROADMAP.md](docs/ROADMAP.md#open-source))
+
+See [docs/RELEASE.md](docs/RELEASE.md) for exactly what is done and what is not,
+and [CHANGELOG.md](CHANGELOG.md) for what is in `0.9.0`.
 
 **Windows only.** LocalDocks reads processes and sockets through Win32 APIs
 directly. Other platforms are future scope, not a near-term plan.
@@ -96,7 +107,9 @@ no account.
 - [x] Safe, identity-verified process termination
 - [x] Live updates
 - [x] Three themes
-- [ ] Release packaging, signing and Store submission — *in progress*
+- [x] Release packaging — installer verified installed, upgraded and uninstalled
+- [ ] Code signing — investigated and deliberately deferred
+- [ ] Microsoft Store submission — blocked on MSIX
 
 Detail depth is tracked in [docs/ROADMAP.md](docs/ROADMAP.md), which marks every
 item IMPLEMENTED, RELEASE-READY, PLANNED, DEFERRED or NON-GOAL against the code
@@ -175,6 +188,11 @@ LocalDocks is intended to become an open-source project that developers can use,
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The decisions and why each was made |
 | [docs/BACKEND.md](docs/BACKEND.md) | The Windows API surface, with costs and rejected alternatives |
 | [docs/RELEASE.md](docs/RELEASE.md) | How a release is built and what is verified |
+| [docs/RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md) | Every release-candidate line item, with its evidence |
+| [docs/CODE-SIGNING.md](docs/CODE-SIGNING.md) | Why this build is unsigned, and what signing it would take |
+| [docs/UPDATES.md](docs/UPDATES.md) | Why there is no updater, and what adding one would cost |
+| [docs/STORE-LISTING.md](docs/STORE-LISTING.md) | Microsoft Store submission — listing text and what is blocked |
+| [CHANGELOG.md](CHANGELOG.md) | What changed, per version |
 
 ## Contributing
 
