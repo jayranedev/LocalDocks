@@ -1,18 +1,47 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+# `app` was the scaffold's name. The crate name reaches the user: it is what
+# `cargo` prints, and without the `[[bin]]` below it is also what the installed
+# executable is called — which for a process monitor would mean LocalDocks
+# listing itself in its own Processes table as "app.exe".
+name = "localdocks"
+# ---------------------------------------------------------------------------
+# THE VERSION. This is the single source of truth for the whole product.
+#
+# `tauri.conf.json` deliberately has no `version` key: Tauri falls back to this
+# one, so the bundle, the installer, the Windows file metadata and the crate all
+# carry the same number without anyone having to remember to update three files.
+# `package.json` has no version either, for the same reason — it is private and
+# never published, so a number there could only ever drift out of sync.
+#
+# Bump here, then tag the commit `v<version>`. Windows package versions must be
+# plain numeric, so a pre-release marker lives in the git tag and the GitHub
+# release flag, never here.
+# ---------------------------------------------------------------------------
+version = "0.9.0"
+description = "A local development dashboard for Windows: services, processes, ports and system telemetry."
+authors = ["Jay Rane"]
+license = "MIT"
+repository = "https://github.com/jayranedev/LocalDocks"
+homepage = "https://github.com/jayranedev/LocalDocks"
+readme = "../README.md"
+keywords = ["dashboard", "processes", "ports", "windows", "developer-tools"]
+categories = ["command-line-utilities", "development-tools"]
 edition = "2021"
 rust-version = "1.77.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "app_lib"
+name = "localdocks_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# The shipped executable. Named here rather than through Tauri's
+# `mainBinaryName` override because Tauri's own documentation prefers it: this
+# way cargo produces `LocalDocks.exe` directly and there is no rename step
+# between the build and the bundle that could disagree.
+[[bin]]
+name = "LocalDocks"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }

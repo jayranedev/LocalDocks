@@ -1,7 +1,14 @@
 {
   "name": "localdocks",
   "private": true,
-  "version": "0.0.0",
+  "description": "A local development dashboard for Windows: services, processes, ports and system telemetry.",
+  "license": "MIT",
+  "author": "Jay Rane",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jayranedev/LocalDocks.git"
+  },
+  "homepage": "https://github.com/jayranedev/LocalDocks",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +17,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "npx tauri dev"
+    "tauri": "tauri",
+    "dev:app": "tauri dev",
+    "build:app": "tauri build"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

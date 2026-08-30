@@ -3,6 +3,7 @@ import { Logo } from './Icon';
 import { Chip, IconButton, Kbd } from './ui';
 import { Icon } from './Icon';
 import { ModeSwitch } from './ModeSwitch';
+import { useAppVersion } from '../hooks/useAppVersion';
 
 interface TitleBarProps {
   onOpenPalette: () => void;
@@ -12,6 +13,8 @@ interface TitleBarProps {
 }
 
 export function TitleBar({ onOpenPalette, onOpenSettings, mode, onModeChange }: TitleBarProps) {
+  const version = useAppVersion();
+
   return (
     <header
       className="flex h-[46px] flex-none items-center gap-3 border-b border-border bg-surface-raised px-3.5"
@@ -22,7 +25,7 @@ export function TitleBar({ onOpenPalette, onOpenSettings, mode, onModeChange }: 
           <Logo />
         </span>
         <span className="text-[13.5px] font-semibold tracking-[-0.01em]">LocalDocks</span>
-        <Chip tone="quiet">v0.1.0</Chip>
+        {version && <Chip tone="quiet">v{version}</Chip>}
       </div>
 
       <div className="flex-1" />

@@ -44,6 +44,29 @@ function describeError(err: unknown): { message: string; detail: string } {
   }
 }
 
+/**
+ * The application version, read from the running app rather than written here.
+ *
+ * There is exactly one version number in this repository —
+ * `src-tauri/Cargo.toml` — and this is how the UI reaches it. Hard-coding it in
+ * a component is how the About screen came to claim `v0.1.0` while the
+ * installer, the executable metadata and the uninstall entry all said `0.9.0`.
+ * A version the user can read has to come from the same place as the version
+ * the installer writes, or the two will disagree exactly when it matters.
+ *
+ * `null` in a browser-only dev session, where there is no packaged app to ask.
+ */
+export async function getAppVersion(): Promise<string | null> {
+  if (!IS_TAURI) return null;
+  try {
+    const { getVersion } = await import('@tauri-apps/api/app');
+    return await getVersion();
+  } catch {
+    // A version we cannot read is shown as absent rather than guessed.
+    return null;
+  }
+}
+
 export async function getSnapshot(): Promise<Snapshot> {
   if (!IS_TAURI) return buildSnapshot();
   const { invoke } = await import('@tauri-apps/api/core');

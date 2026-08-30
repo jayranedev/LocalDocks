@@ -3,6 +3,7 @@ import { IS_DEV, MODULES } from '../config/flags';
 import { BACKEND } from '../lib/ipc';
 import { INTERVALS, THEME_LABELS, THEMES } from '../lib/settings';
 import { Card, Chip, Note, PageHeader, SettingRow } from '../components/ui';
+import { useAppVersion } from '../hooks/useAppVersion';
 
 /**
  * Settings.
@@ -24,6 +25,8 @@ interface Props {
 }
 
 export function Settings({ theme, onThemeChange, intervalMs, onIntervalChange }: Props) {
+  const version = useAppVersion();
+
   return (
     <div className="ld-fade-in overflow-auto px-6 py-5">
       <PageHeader title="Settings" subtitle="Local only. Nothing here leaves this machine." />
@@ -115,7 +118,7 @@ export function Settings({ theme, onThemeChange, intervalMs, onIntervalChange }:
         <Card className="px-4 py-3.5">
           <h2 className="mb-2 text-[12.5px] font-semibold">About</h2>
           <p className="text-xs leading-[1.8] text-secondary">
-            LocalDocks v0.1.0 · MIT · Silent Minds
+            LocalDocks {version ? `v${version}` : ''} · MIT · Silent Minds
             <br />
             <span className="font-mono text-[11px] text-muted">com.silentminds.localdocks</span>
           </p>
