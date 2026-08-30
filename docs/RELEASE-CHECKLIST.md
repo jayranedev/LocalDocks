@@ -36,13 +36,13 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Startup | **DONE** | 964 ms to first window from a clean profile |
-| Shutdown | **DONE** | Graceful close; no orphan WebView2 processes |
-| Restart | **DONE** | Relaunch clean; settings restored |
-| Failure recovery | **DONE** | A listener killed mid-observation; app survived, memory and handles flat |
-| Long-run stability | **DONE** | ~6 h wall clock including a sleep/resume cycle; working set 42.8 → 42.7 MB, handles 388 → 390 |
-| No memory leak | **DONE** | Working set non-monotonic within a 1 MB band across the full run |
-| No handle leak | **DONE** | 384–390 handles across the full run, non-monotonic |
+| Startup | **DONE** | 1099 ms to first window from a clean profile, on the final artifact |
+| Shutdown | **DONE** | Graceful close; 0 orphan LocalDocks and 0 orphan WebView2 processes |
+| Restart | **DONE** | Theme and interval changed through the UI, survived a full process restart: `{"theme":"light","intervalMs":2000,"mode":"developer"}` |
+| Failure recovery | **DONE** | A listener killed mid-observation; app survived, memory and handles flat. Release log 0 bytes across install, launch, close, relaunch, uninstall and reinstall |
+| Long-run stability | **DONE** | 6 h 19 min wall clock, 33 samples, including a sleep/resume cycle the app survived |
+| No memory leak | **DONE** | Private bytes 12.55 → 11.30 MB across the run, non-monotonic; working set 42.8 → 43.2 MB then trimmed to 26 MB by Windows |
+| No handle leak | **DONE** | 384–390 handles and 23–28 threads across the full run, both non-monotonic; 0.09–0.12% CPU throughout |
 
 ## Security
 
@@ -53,7 +53,7 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 | Safe termination | **DONE** | PID **and** creation time; never PID alone |
 | Safe URL handling | **DONE** | Allowlist, plus control-character and NUL rejection before scheme parsing |
 | No shell execution | **DONE** | `ShellExecuteW` with the `open` verb; no argument string is built |
-| No secrets | **DONE** | 110 tracked files scanned; two real findings fixed |
+| No secrets | **DONE** | 133 tracked files and all 33 reachable commits scanned; no secrets, no IP addresses, no credentials |
 | Minimal capabilities | **DONE** | `core:default` only; no fs, shell, http or dialog plugin |
 | CSP | **DONE** | Was `null`; now `default-src 'self'` with `object-src 'none'` |
 | No remote telemetry | **DONE** | No network client in the dependency tree |
@@ -62,10 +62,10 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Release build | **DONE** | `LocalDocks.exe`, 9.53 MB, optimised |
-| Installer | **DONE** | `LocalDocks_0.9.0_x64-setup.exe`, 2.65 MB, NSIS per-user |
-| Install | **DONE** | 2.1 s, exit 0, no elevation |
-| Uninstall | **DONE** | No files, no shortcut, no registry entry left |
+| Release build | **DONE** | `LocalDocks.exe` 9.55 MB, ProductVersion and FileVersion both 0.9.0 |
+| Installer | **DONE** | `LocalDocks_0.9.0_x64-setup.exe` 2.65 MB, NSIS per-user, `Get-AuthenticodeSignature` = NotSigned as expected |
+| Install | **DONE** | 2.0 s, exit 0, unelevated; one uninstall entry, version 0.9.0, publisher Jay Rane |
+| Uninstall | **DONE** | Install directory, shortcut and registry entry all gone; user settings deliberately left in place |
 | Upgrade | **DONE** | 0.9.0 → 0.9.1 over the top: one registry entry, settings survived |
 | Package identity | **DONE** | Product, identifier, publisher and version all cross-checked |
 | Icon | **DONE** | Shortcut resolves to the executable's embedded icon |
@@ -83,7 +83,7 @@ not against `cargo test` and `tauri dev`. Where a line is not done it says why.
 | Licence | **DONE** | MIT; `Cargo.toml` and `package.json` both declare it |
 | Contributor docs | **DONE** | CONTRIBUTING.md, CODE_OF_CONDUCT.md, issue and PR templates |
 | Security policy | **DONE** | SECURITY.md |
-| No private data | **PARTIAL** | Working tree clean; one string remains in commit `1339aae` |
+| No private data | **DONE** | Working tree clean; history rewritten to remove the author's real email; the one private path string went with the rewritten SHAs |
 | Dependency audit | **DONE** | 6 Rust, 5 runtime npm; all MIT / Apache-2.0 / OFL-1.1; 0 vulnerabilities |
 | Changelog | **DONE** | CHANGELOG.md, Keep a Changelog format |
 | Third-party attribution | **DONE** | THIRD-PARTY-NOTICES.md; IBM Plex OFL-1.1 attributed |
