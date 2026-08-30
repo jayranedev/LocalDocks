@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TerminateResult } from '../types';
 import type { DetailTarget } from '../lib/detail';
 import { terminateProcess } from '../lib/ipc';
@@ -25,6 +25,7 @@ interface Props {
 export function TerminateDialog({ target, onClose, onTerminated }: Props) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<TerminateResult | null>(null);
+  const panel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -33,6 +34,21 @@ export function TerminateDialog({ target, onClose, onTerminated }: Props) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  /* Move focus into the dialog, and put it back where it came from on close.
+     `aria-modal` tells a screen reader this is modal; it does not move focus,
+     and without that a keyboard user's focus stays on the row behind — so the
+     dialog is announced to nobody and Tab walks the page underneath it. The
+     opener is remembered rather than assumed, because this dialog is reachable
+     from the detail panel and from the process table. */
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    /* Cancel, not Force terminate: the destructive action should never be the
+       one a stray Enter reaches first. */
+    const cancel = panel.current?.querySelector<HTMLElement>('[data-autofocus]');
+    (cancel ?? panel.current)?.focus();
+    return () => opener?.focus?.();
+  }, []);
 
   async function confirm() {
     setBusy(true);
@@ -52,6 +68,8 @@ export function TerminateDialog({ target, onClose, onTerminated }: Props) {
       aria-label={`Terminate ${target.title}`}
     >
       <div
+        ref={panel}
+        tabIndex={-1}
         className="ld-pop-in w-[436px] rounded-xl border border-border-strong bg-surface-raised px-5 py-[19px]"
         style={{ boxShadow: 'var(--shadow-panel)' }}
         onClick={(e) => e.stopPropagation()}
@@ -94,7 +112,9 @@ export function TerminateDialog({ target, onClose, onTerminated }: Props) {
         )}
 
         <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose} autoFocusTarget>
+            Cancel
+          </Button>
           <Button icon="stop" variant="dangerSolid" onClick={() => void confirm()} disabled={busy}>
             {busy ? 'Verifying…' : 'Force terminate'}
           </Button>

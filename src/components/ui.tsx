@@ -78,6 +78,7 @@ export function Button({
   variant = 'default',
   className = '',
   disabled,
+  autoFocusTarget,
 }: {
   icon?: IconName;
   children?: ReactNode;
@@ -85,6 +86,14 @@ export function Button({
   variant?: 'default' | 'primary' | 'danger' | 'dangerSolid';
   className?: string;
   disabled?: boolean;
+  /**
+   * Marks this button as the one a dialog should focus when it opens.
+   *
+   * A marker rather than React's `autoFocus` so the dialog decides *when* to
+   * move focus — it also has to remember where focus came from, and the two
+   * halves belong together.
+   */
+  autoFocusTarget?: boolean;
 }) {
   const variants = {
     default: 'border-border bg-surface text-secondary hover:border-border-strong hover:text-primary',
@@ -95,6 +104,7 @@ export function Button({
   return (
     <button
       type="button"
+      data-autofocus={autoFocusTarget ? '' : undefined}
       onClick={onClick}
       disabled={disabled}
       className={`ld-disabled flex h-8 items-center justify-center gap-[7px] rounded-[7px] border px-3 text-xs font-medium whitespace-nowrap transition-colors ${variants[variant]} ${className}`}

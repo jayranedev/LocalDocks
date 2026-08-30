@@ -347,4 +347,26 @@ button,
   .ld-pop-in {
     animation: none;
   }
+
+  /*
+    The safety net.
+
+    The named rules above cover every animation this app authors, and the
+    utilities that move things carry `motion-reduce:transition-none`. This
+    catches whatever is added next: a contributor writing a `transition-` or
+    `animate-` utility should not also have to remember the reduced-motion
+    variant for the preference to be honoured.
+
+    Deliberately not `transition: none`, which would cancel a running
+    transition and can strand an element mid-way. A duration of ~0 lets every
+    transition still fire and still settle on its final value, instantly.
+  */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
