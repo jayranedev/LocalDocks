@@ -343,30 +343,58 @@ mod tests {
         assert!(has(Protocol::Udp, true), "no UDP IPv6 rows");
     }
 
+    /// What may repeat, and what that repetition means.
+    ///
+    /// The original version of this test asserted a TCP address and port could
+    /// never be enumerated twice, on the reasoning that two sockets cannot hold
+    /// the same TCP endpoint. Running a demo environment disproved it: two
+    /// processes both bound `127.0.0.1:52080` with `SO_REUSEADDR`, and the
+    /// extended table reported both, from different PIDs. Windows treats
+    /// `SO_REUSEADDR` closer to BSD's `SO_REUSEPORT` than the name suggests —
+    /// it permits a genuine second bind rather than only reuse of a lingering
+    /// address.
+    ///
+    /// So a duplicated TCP endpoint is not a misread table. It is **two
+    /// processes contending for one port**, which is the situation a developer
+    /// most wants to see and the data V2's conflict detection is built on.
+    /// Deduplicating it away would hide the conflict.
     #[test]
-    fn a_tcp_listener_is_never_reported_twice() {
-        // Two sockets cannot hold the same TCP address and port, so a repeat
-        // here would mean the table was misread.
-        //
-        // UDP is deliberately excluded: a process can bind one address and
-        // port several times with SO_REUSEADDR, which is how multicast
-        // discovery works. This machine really does report 0.0.0.0:3702
-        // (WS-Discovery) twice from one PID, and the extended table has no
-        // socket handle to tell the two apart — which is why `logic::ports`
-        // deduplicates rather than trusting this.
+    fn a_repeated_tcp_endpoint_means_two_processes_contending() {
         let endpoints = enumerate().expect("enumerate");
-        let mut seen = HashSet::new();
+        let mut by_endpoint: std::collections::HashMap<_, Vec<u32>> =
+            std::collections::HashMap::new();
         for e in endpoints.iter().filter(|e| e.protocol == Protocol::Tcp) {
-            let key = (e.address, e.scope_id, e.port);
-            assert!(seen.insert(key), "TCP listener enumerated twice: {e:?}");
+            by_endpoint
+                .entry((e.address, e.scope_id, e.port))
+                .or_default()
+                .push(e.pid);
+        }
+        for (endpoint, pids) in by_endpoint {
+            let unique: HashSet<_> = pids.iter().collect();
+            assert_eq!(
+                unique.len(),
+                pids.len(),
+                "TCP {endpoint:?} was reported twice for the same PID, which would be a \
+                 misread table rather than two processes contending"
+            );
         }
     }
 
+    /// The other half, which the original suite already knew: a *UDP* socket
+    /// can repeat identically, PID and all.
+    ///
+    /// A process may bind one address and port several times with
+    /// `SO_REUSEADDR`, which is how multicast discovery works. This machine
+    /// really does report `0.0.0.0:3702` (WS-Discovery) twice from one PID, and
+    /// the extended table carries no socket handle to tell the two apart —
+    /// which is why `logic::ports` deduplicates on the whole tuple rather than
+    /// trusting the table to be unique.
+    ///
+    /// Documenting the shape rather than denying it: when a row repeats
+    /// exactly, every field matches, so the row that is dropped carries no
+    /// information the kept row lacks.
     #[test]
-    fn any_repeated_socket_is_udp_and_is_repeated_identically() {
-        // Documents the shape of the duplication rather than denying it: when
-        // a socket repeats it is UDP, and every field matches, so the row the
-        // deduplication drops carries no information the kept row lacks.
+    fn an_exactly_repeated_socket_is_always_udp() {
         let endpoints = enumerate().expect("enumerate");
         let mut seen: HashSet<(Protocol, std::net::IpAddr, u32, u16, u32)> = HashSet::new();
         for e in &endpoints {
@@ -375,7 +403,7 @@ mod tests {
                 assert_eq!(
                     e.protocol,
                     Protocol::Udp,
-                    "only UDP may repeat an address and port: {e:?}"
+                    "a TCP row repeated with an identical PID: {e:?}"
                 );
             }
         }

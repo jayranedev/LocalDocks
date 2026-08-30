@@ -643,18 +643,52 @@ pub const EXCLUDED: &[Excluded] = &[
 
 /// Find a registered developer program by executable stem.
 ///
-/// Exact, case-insensitive comparison on the whole stem. Never a prefix and
-/// never a substring: `node-updater` is not `node`.
+/// Exact comparison first, then the version-suffix retry described in
+/// [`unversioned`]. Never a prefix and never a substring: `node-updater` is
+/// not `node`.
 pub fn program(stem: &str) -> Option<&'static Program> {
-    DEDICATED
-        .iter()
-        .chain(RUNTIMES.iter())
-        .find(|p| p.stem.eq_ignore_ascii_case(stem))
+    let find = |s: &str| {
+        DEDICATED
+            .iter()
+            .chain(RUNTIMES.iter())
+            .find(|p| p.stem.eq_ignore_ascii_case(s))
+    };
+    find(stem).or_else(|| unversioned(stem).and_then(find))
 }
 
 /// Find an exclusion by executable stem.
 pub fn excluded(stem: &str) -> Option<&'static Excluded> {
-    EXCLUDED.iter().find(|e| e.stem.eq_ignore_ascii_case(stem))
+    let find = |s: &str| EXCLUDED.iter().find(|e| e.stem.eq_ignore_ascii_case(s));
+    find(stem).or_else(|| unversioned(stem).and_then(find))
+}
+
+/// A stem with a trailing version dropped: `python3.12` -> `python`.
+///
+/// Windows ships several runtimes under versioned executable names. The
+/// Microsoft Store build of Python installs as `python3.12.exe`, and that is
+/// the name the process list shows — so an exact-match-only registry answers
+/// "unrecognised" for one of the most common development runtimes on Windows.
+/// This was found by running a real demo environment, not by reading the table.
+///
+/// The retry is deliberately narrow, and only ever runs *after* an exact match
+/// has failed:
+///
+///   * Only a trailing run of digits and dots is removed, so `python3.12`
+///     becomes `python` and `python2` becomes `python`.
+///   * The result must still contain a letter, so a stem that is only digits
+///     matches nothing.
+///   * It must actually differ from the input, so a stem with no version costs
+///     one comparison and nothing else.
+///
+/// `msedgewebview2` and `obs64` are in the exclusion table under their full
+/// versioned names and match exactly, before this is ever reached — which is
+/// why the retry runs second rather than as a normalisation step.
+fn unversioned(stem: &str) -> Option<&str> {
+    let trimmed = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    if trimmed.len() == stem.len() || !trimmed.chars().any(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    Some(trimmed)
 }
 
 /// Find the signature a command-line token matches.
@@ -744,6 +778,55 @@ mod tests {
     fn runtimes_are_never_marked_dedicated() {
         assert!(RUNTIMES.iter().all(|p| p.evidence == Evidence::Runtime));
         assert!(DEDICATED.iter().all(|p| p.evidence == Evidence::Dedicated));
+    }
+
+    /// Found by running a real demo environment: the Microsoft Store build of
+    /// Python installs as `python3.12.exe`, and that is the name the process
+    /// list shows. An exact-match-only registry called one of the most common
+    /// Windows development runtimes unrecognised.
+    #[test]
+    fn a_versioned_runtime_name_still_resolves() {
+        for name in ["python3.12", "python3.13", "python3", "python2", "python"] {
+            let p = program(name).unwrap_or_else(|| panic!("{name} should resolve"));
+            assert_eq!(p.display, "Python", "{name}");
+            assert_eq!(p.evidence, Evidence::Runtime);
+        }
+    }
+
+    /// The retry runs only after an exact match fails, so a program whose real
+    /// name ends in digits keeps its own entry.
+    #[test]
+    fn an_exact_match_always_wins_over_the_version_retry() {
+        assert_eq!(
+            excluded("msedgewebview2").unwrap().display,
+            "the Edge WebView2 runtime"
+        );
+        assert_eq!(excluded("obs64").unwrap().display, "OBS Studio");
+        assert_eq!(
+            excluded("nvsphelper64").unwrap().display,
+            "an NVIDIA helper"
+        );
+    }
+
+    #[test]
+    fn the_version_retry_cannot_invent_a_match() {
+        // Nothing but digits, and nothing that resolves after trimming.
+        assert!(program("12345").is_none());
+        assert!(program("3.12").is_none());
+        assert!(program("notaprogram9").is_none());
+        assert!(excluded("87654").is_none());
+        // And it never turns a non-match into a prefix match.
+        assert!(program("nodejs-updater").is_none());
+        assert!(program("mongodb-compass").is_none());
+    }
+
+    #[test]
+    fn unversioned_trims_only_a_trailing_version() {
+        assert_eq!(unversioned("python3.12"), Some("python"));
+        assert_eq!(unversioned("node20"), Some("node"));
+        assert_eq!(unversioned("python"), None, "nothing to trim");
+        assert_eq!(unversioned("123"), None, "no letters left");
+        assert_eq!(unversioned(""), None);
     }
 
     #[test]
