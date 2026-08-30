@@ -692,6 +692,219 @@ mod tests {
         assert!(services[0].relevance_reason.contains("could not be read"));
     }
 
+    // ------------------------------------- 8. ports are dynamic, by scenario
+    //
+    // The rule these guard: **a development server may listen on any port, and
+    // the port must never be what decides relevance.** A tool that recognised
+    // 3000 and 5173 would be right on a fresh tutorial project and wrong on
+    // every real machine, where a second server takes 3001, Vite steps to 5174
+    // because 5173 was taken, and half of everything is on a number nobody
+    // chose.
+    //
+    // These are scenario tests rather than unit tests. Each one is a situation
+    // a developer actually hits, and each asserts the same thing: the verdict
+    // came from the runtime and its command line, and the port was irrelevant.
+
+    /// Two Node servers, one on 3000 and one on 3001. Both are development.
+    #[test]
+    fn a_second_node_server_on_the_next_port_classifies_the_same_as_the_first() {
+        let first = classify(
+            "node.exe",
+            Some(r"node C:\p\demo-web\node_modules\.bin\next dev --port 3000"),
+        );
+        let second = classify(
+            "node.exe",
+            Some(r"node C:\p\demo-api\node_modules\.bin\next dev --port 3001"),
+        );
+
+        assert_eq!(first.relevance, Relevance::Developer);
+        assert_eq!(second.relevance, Relevance::Developer);
+        assert_eq!(
+            first.reason, second.reason,
+            "the port must not change the reason"
+        );
+    }
+
+    /// Vite's actual behaviour: 5173 is taken, so it takes 5174. Nothing about
+    /// the classification may notice.
+    #[test]
+    fn vite_stepping_to_the_next_free_port_is_still_vite() {
+        let base = classify(
+            "node.exe",
+            Some(r"node C:\p\demo-web\node_modules\.bin\vite"),
+        );
+        for port in ["5173", "5174", "5175", "51234", "8", "65535"] {
+            let c = classify(
+                "node.exe",
+                Some(&format!(
+                    r"node C:\p\demo-web\node_modules\.bin\vite --port {port}"
+                )),
+            );
+            assert_eq!(c, base, "port {port} changed the verdict");
+        }
+    }
+
+    /// A developer who deliberately picks an unusual port is still a developer.
+    #[test]
+    fn a_hand_picked_unusual_port_does_not_disqualify_a_dev_server() {
+        for line in [
+            "python -m uvicorn app:app --port 9",
+            "python -m uvicorn app:app --port 44321",
+            "python -m uvicorn app:app --port 65534",
+            "python -m uvicorn app:app --host 0.0.0.0 --port 1024",
+        ] {
+            assert_eq!(
+                verdict("python.exe", Some(line)),
+                Relevance::Developer,
+                "{line}"
+            );
+        }
+    }
+
+    /// The inverse, and the more important half: a *consumer* application does
+    /// not become development work by taking a port developers like.
+    #[test]
+    fn a_consumer_app_on_a_classic_dev_port_is_still_not_development() {
+        for name in ["chrome.exe", "Spotify.exe", "steam.exe", "iCloudDrive.exe"] {
+            for port in ["3000", "5173", "8080", "8000"] {
+                let c = classify(name, Some(&format!("--port {port} --serve")));
+                assert_eq!(
+                    c.relevance,
+                    Relevance::System,
+                    "{name} on {port} must not be development"
+                );
+            }
+        }
+    }
+
+    /// Several projects at once, which is the normal state of a working
+    /// machine. Every one is judged on its own runtime and command line.
+    #[test]
+    fn several_projects_running_at_once_are_each_judged_on_their_own_evidence() {
+        let machine = [
+            (
+                "node.exe",
+                r"node C:\p\demo-web\node_modules\.bin\vite --port 5174",
+                Relevance::Developer,
+            ),
+            (
+                "node.exe",
+                r"node C:\p\demo-api\node_modules\.bin\nodemon server.js",
+                Relevance::Developer,
+            ),
+            (
+                "python.exe",
+                r"C:\p\demo-api\.venv\Scripts\python.exe -m uvicorn app:app --port 8001",
+                Relevance::Developer,
+            ),
+            (
+                "mongod.exe",
+                r"mongod --dbpath C:\p\local-database\data --port 37017",
+                Relevance::Developer,
+            ),
+            (
+                "postgres.exe",
+                r"postgres -D C:\p\local-database\pg -p 55432",
+                Relevance::Developer,
+            ),
+            (
+                "chrome.exe",
+                r"chrome.exe --type=renderer",
+                Relevance::System,
+            ),
+            ("Spotify.exe", r"Spotify.exe", Relevance::System),
+            ("Code.exe", r"Code.exe --type=utility", Relevance::Unknown),
+        ];
+        for (name, line, expected) in machine {
+            assert_eq!(
+                classify(name, Some(line)).relevance,
+                expected,
+                "{name}: {line}"
+            );
+        }
+    }
+
+    /// A database on a non-default port is still a database. This is where a
+    /// port table fails hardest: 27017 and 5432 are the numbers such a table
+    /// would carry, and neither appears here.
+    #[test]
+    fn a_database_on_a_non_default_port_is_still_a_database() {
+        let default = classify("mongod.exe", Some("mongod --port 27017"));
+        let moved = classify("mongod.exe", Some("mongod --port 37017"));
+        let none = classify("mongod.exe", None);
+        assert_eq!(default.relevance, Relevance::Developer);
+        assert_eq!(moved, default);
+        assert_eq!(
+            none, default,
+            "a dedicated program needs no command line at all"
+        );
+    }
+
+    /// A developer process holding no socket at all — a Celery worker, a
+    /// bundler in watch mode. The classifier still answers, because it never
+    /// needed a socket to do so.
+    ///
+    /// Whether such a process is *shown* is a separate question with a
+    /// separate answer: Developer mode lists services, and a process with no
+    /// listening socket is not a service, so it appears in System mode only.
+    /// That is documented behaviour, not an oversight — but the classification
+    /// itself must not depend on the socket.
+    #[test]
+    fn a_developer_process_with_no_socket_still_classifies_as_developer() {
+        assert_eq!(
+            verdict(
+                "python.exe",
+                Some("celery -A app.worker worker --loglevel=info")
+            ),
+            Relevance::Developer
+        );
+        assert_eq!(
+            verdict(
+                "node.exe",
+                Some(r"node C:\p\demo-web\node_modules\.bin\tsc --watch")
+            ),
+            Relevance::Developer
+        );
+    }
+
+    /// The structural argument, asserted rather than trusted: `classify` takes
+    /// a name and a command line. There is no parameter a port could arrive
+    /// through, so no future change can make the verdict depend on one without
+    /// changing this signature — which this test would then stop compiling
+    /// against.
+    #[test]
+    fn the_classifier_signature_admits_no_port() {
+        let f: fn(&str, Option<&str>) -> Classification = classify;
+        let c = f("node.exe", Some("node vite.js"));
+        assert_eq!(c.relevance, Relevance::Developer);
+    }
+
+    /// Every digit sequence in a command line is inert. Ports, PIDs, versions
+    /// and hashes all look alike to the tokenizer, and none of them is a
+    /// registered signature.
+    #[test]
+    fn no_bare_number_is_ever_a_development_signature() {
+        for line in [
+            "3000",
+            "5173 8080 27017 5432",
+            "--port=3000",
+            ":::5173",
+            "127.0.0.1:8000",
+        ] {
+            assert_eq!(
+                verdict("someapp.exe", Some(line)),
+                Relevance::Unknown,
+                "{line} must classify nothing"
+            );
+            // And it cannot promote a registered runtime either.
+            assert_eq!(
+                verdict("node.exe", Some(line)),
+                Relevance::Unknown,
+                "{line}"
+            );
+        }
+    }
+
     // -------------------------------------------------------- the tokenizer
 
     #[test]
