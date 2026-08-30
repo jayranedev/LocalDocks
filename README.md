@@ -188,9 +188,11 @@ For security-related issues, please see [SECURITY.md](SECURITY.md).
 
 ## License
 
-LocalDocks is licensed under the MIT License.
+LocalDocks is licensed under the MIT License. See [LICENSE](LICENSE).
 
-See [LICENSE](LICENSE) for details.
+Bundled third-party components and their licences — including the IBM Plex fonts,
+which carry an attribution requirement MIT does not cover — are listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ---
 
