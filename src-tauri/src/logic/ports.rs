@@ -250,9 +250,11 @@ mod tests {
             format_address(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
             "127.0.0.1"
         );
+        // A documentation-range address (RFC 5737). The test needs "not
+        // loopback", not anyone's actual LAN.
         assert_eq!(
-            format_address(IpAddr::V4(Ipv4Addr::new(192, 168, 68, 103)), 0),
-            "192.168.68.103"
+            format_address(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)), 0),
+            "203.0.113.7"
         );
     }
 

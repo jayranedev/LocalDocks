@@ -92,7 +92,7 @@ const SEEDS: Seed[] = [
     relevance: 'developer',
     relevanceReason: 'Python launched with the Uvicorn signature.',
     ports: [{ port: 8000, address: '127.0.0.1' }],
-    executable: 'C:\\Users\\jay\\.venvs\\shopfront\\Scripts\\python.exe',
+    executable: 'C:\\Users\\dev\\.venvs\\shopfront\\Scripts\\python.exe',
     commandLine: 'python -m uvicorn app.main:app --reload --port 8000',
     workingDirectory: 'C:\\dev\\shopfront\\server',
   },
@@ -110,7 +110,7 @@ const SEEDS: Seed[] = [
     relevance: 'developer',
     relevanceReason: 'Python launched with the Celery signature.',
     ports: [{ port: 8001, address: '127.0.0.1' }],
-    executable: 'C:\\Users\\jay\\.venvs\\shopfront\\Scripts\\python.exe',
+    executable: 'C:\\Users\\dev\\.venvs\\shopfront\\Scripts\\python.exe',
     commandLine: 'celery -A app.worker worker --loglevel=info',
     workingDirectory: 'C:\\dev\\shopfront\\server',
   },
@@ -201,7 +201,7 @@ const SEEDS: Seed[] = [
     relevanceReason:
       'code is in neither the developer nor the system registry, so it is not classified.',
     ports: [{ port: 23674, address: '127.0.0.1' }],
-    executable: 'C:\\Users\\jay\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe',
+    executable: 'C:\\Users\\dev\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe',
     commandLine: 'Code.exe --type=utility --utility-sub-type=node.mojom.NodeService',
   },
 ];
