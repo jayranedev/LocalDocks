@@ -111,9 +111,22 @@ export function Overview({ snapshot, view, intervalMs, onSelect }: Props) {
       </div>
 
       <div className="overflow-hidden rounded-[9px] border border-border bg-surface">
-        {services.map((s) => (
-          <OverviewRow key={s.id} service={s} mode={view.mode} onSelect={onSelect} />
-        ))}
+        {services.length === 0 ? (
+          /* Without this the bordered container collapses to a hairline, which
+             reads as a rendering fault rather than as "nothing is running".
+             The two modes need different words: in Developer mode the machine
+             may be busy and simply have no *development* services, and saying
+             so is what stops the user concluding the app is broken. */
+          <p className="px-3.5 py-5 text-[12px] leading-[1.6] text-muted">
+            {view.mode === 'developer'
+              ? 'No development services are running. Start a dev server, or switch to System mode to see everything that is listening.'
+              : 'Nothing you own is listening on a non-system port.'}
+          </p>
+        ) : (
+          services.map((s) => (
+            <OverviewRow key={s.id} service={s} mode={view.mode} onSelect={onSelect} />
+          ))
+        )}
       </div>
 
       <TelemetryCards system={snapshot.system} />
@@ -155,7 +168,12 @@ function OverviewRow({
         </Chip>
       )}
       <span className="flex-1" />
-      <span className="w-24 font-mono text-[11.5px] text-muted">{service.processName}</span>
+      <span
+        className="w-24 truncate font-mono text-[11.5px] text-muted"
+        title={service.processName}
+      >
+        {service.processName}
+      </span>
       <span className="w-[52px] font-mono text-[11.5px] text-muted tabular-nums">{service.pid}</span>
       <span className="w-[46px] text-right font-mono text-[11.5px] text-secondary tabular-nums">
         {formatCpu(service.cpuPercent)}

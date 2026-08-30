@@ -164,13 +164,26 @@ export function Ports({ snapshot, selectedId, onSelect }: Props) {
                     {r.port}
                   </span>
                   <span className="w-[58px] font-mono text-[11.5px] text-muted">{r.protocol}</span>
-                  <span className="w-[150px] font-mono text-[11.5px] text-secondary">
+                  <span
+                    className="w-[150px] truncate font-mono text-[11.5px] text-secondary"
+                    title={`${r.address}:${r.port}`}
+                  >
                     {r.address}:{r.port}
                   </span>
                   <span className="w-[60px] font-mono text-[11.5px] text-muted tabular-nums">{r.pid}</span>
-                  <span className="w-[118px] font-mono text-[11.5px] text-muted">{r.processName}</span>
+                  <span
+                    className="w-[118px] truncate font-mono text-[11.5px] text-muted"
+                    title={r.processName}
+                  >
+                    {r.processName}
+                  </span>
                   <span className="flex-1" />
-                  <span className="w-[130px] text-xs text-primary">{r.serviceLabel ?? '—'}</span>
+                  <span
+                    className="w-[130px] truncate text-xs text-primary"
+                    title={r.serviceLabel ?? undefined}
+                  >
+                    {r.serviceLabel ?? '—'}
+                  </span>
                   <span className="w-[74px] text-right text-[11px] text-success">{r.state}</span>
                   <span className="w-[18px] text-muted opacity-0 transition-opacity group-hover:opacity-100">
                     {selectable && <Icon name="chevron" size={14} />}

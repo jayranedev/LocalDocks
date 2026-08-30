@@ -165,7 +165,12 @@ function ServiceRow({
         {isDualStack(service.endpoints) && <Chip tone="quiet">v4+v6</Chip>}
       </div>
       <span className="flex-1" />
-      <span className="w-24 font-mono text-[11.5px] text-muted">{service.processName}</span>
+      <span
+        className="w-24 truncate font-mono text-[11.5px] text-muted"
+        title={service.processName}
+      >
+        {service.processName}
+      </span>
       <span className="w-[52px] font-mono text-[11.5px] text-muted tabular-nums">{service.pid}</span>
       <span className="w-[46px] text-right font-mono text-[11.5px] text-secondary tabular-nums">
         {formatCpu(service.cpuPercent)}
