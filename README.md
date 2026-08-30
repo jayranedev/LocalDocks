@@ -8,9 +8,22 @@ Instead of searching through Task Manager or repeatedly using terminal commands 
 
 ## Status
 
-🚧 LocalDocks is currently under active development.
+**V1 is functionally complete and in release-candidate hardening.** Version
+`0.9.0` builds a working, installable Windows package. It is not yet released:
+packaging for the Microsoft Store, code signing and the public repository audit
+are outstanding. See [docs/RELEASE.md](docs/RELEASE.md) for exactly what is done
+and what is not.
 
-The project is being developed in stages, with the initial releases focused on Windows.
+**Windows only.** LocalDocks reads processes and sockets through Win32 APIs
+directly. Other platforms are future scope, not a near-term plan.
+
+### Requirements
+
+- Windows 10 1809 or later (x64)
+- WebView2 runtime — preinstalled on Windows 11 and current Windows 10
+- **No administrator rights.** LocalDocks never elevates and never requests
+  `SeDebugPrivilege`. It can therefore only see processes your own account owns,
+  which is a deliberate limit rather than a gap.
 
 ## Vision
 
@@ -30,40 +43,64 @@ The long-term goal is to make it easy to:
 
 LocalDocks is intentionally designed to remain minimal and developer-focused rather than becoming another general-purpose system task manager.
 
-## Initial Features
+## What V1 does
 
-The first version of LocalDocks will focus on:
+**Sees what is running.** Every process your account owns, every listening
+socket across TCP IPv4, TCP IPv6 and UDP, and the relationship between them. A
+*service* is derived rather than guessed: a process holding a listening socket
+on a non-system port.
 
-- Local development processes
-- Listening ports
-- Process and port relationships
-- CPU and memory usage
-- Process details
-- Searching and filtering
-- Opening local services in a browser
-- Copying local service URLs
-- Terminating processes
-- Live updates
+**Tells development apart from noise.** A machine typically has around thirty
+processes listening on non-system ports, and on a normal desktop nearly all of
+them are Chrome, Spotify, iCloud, Steam and vendor helpers. Developer mode shows
+the ones that are development work, decided by a versioned registry against the
+executable and its command line — never by port number, never by what spawned
+it. Every verdict carries the sentence that produced it, and services the
+registry does not recognise are reported as *unclassified* rather than guessed
+in either direction.
 
-Additional functionality will be introduced gradually.
+**Measures the machine honestly.** CPU and per-logical-processor CPU, memory,
+network throughput, disk throughput and active time, GPU utilisation and memory,
+and ACPI thermal zones. A reading this machine cannot provide says so, naming
+the reason. Nothing renders as `0%` or `0 MB/s` unless that is the measurement.
+
+**Acts safely.** A process is identified by PID *and* creation time, and every
+destructive action re-verifies that identity before touching anything, so a
+recycled PID cannot be terminated by a stale row. Opening a service URL is
+validated against an `http`/`https` allowlist before the OS ever sees the
+string; no shell is invoked.
+
+**Stays out of the way.** One Rust-owned sampler owns the cadence — the UI never
+triggers a scan. Measured at roughly 13 ms per tick and 0.09% CPU at idle. Three
+themes: Local Dark, Dark and Light.
+
+**Sends nothing anywhere.** No network client, no analytics, no crash reporter,
+no account.
 
 ## Roadmap
 
-### V1 — Local Visibility
+### V1 — Local visibility · functionally complete
 
-- [ ] Detect relevant local processes
-- [ ] Detect listening ports
-- [ ] Map ports to processes
-- [ ] Display CPU usage
-- [ ] Display memory usage
-- [ ] Search and filter
-- [ ] Process details
-- [ ] Port details
-- [ ] Open local services in browser
-- [ ] Copy local URLs
-- [ ] Terminate processes
-- [ ] Live updates
-- [ ] Minimal desktop interface
+- [x] Detect local processes
+- [x] Detect listening ports — TCP v4, TCP v6, UDP
+- [x] Map ports to processes
+- [x] Service model: process + endpoints
+- [x] Developer / System mode and the Developer Registry
+- [x] Process CPU, memory, threads, uptime
+- [x] System CPU, per-core CPU and memory
+- [x] Network, storage, GPU and thermal telemetry
+- [x] Search and filter
+- [x] Process details
+- [x] Open local services in browser
+- [x] Copy local URLs
+- [x] Safe, identity-verified process termination
+- [x] Live updates
+- [x] Three themes
+- [ ] Release packaging, signing and Store submission — *in progress*
+
+Detail depth is tracked in [docs/ROADMAP.md](docs/ROADMAP.md), which marks every
+item IMPLEMENTED, RELEASE-READY, PLANNED, DEFERRED or NON-GOAL against the code
+rather than against intent.
 
 ### V2 — Developer Control
 
@@ -129,6 +166,15 @@ The application should remain lightweight and responsive.
 
 **Open source**  
 LocalDocks is intended to become an open-source project that developers can use, inspect, improve, and contribute to.
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [docs/ROADMAP.md](docs/ROADMAP.md) | What exists, what is planned, and what is deliberately not built |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The decisions and why each was made |
+| [docs/BACKEND.md](docs/BACKEND.md) | The Windows API surface, with costs and rejected alternatives |
+| [docs/RELEASE.md](docs/RELEASE.md) | How a release is built and what is verified |
 
 ## Contributing
 

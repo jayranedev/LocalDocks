@@ -298,6 +298,48 @@ tokens. Rules, decided now:
 
 ---
 
+## Release posture
+
+Recorded here because these are backend facts, verified on a packaged build
+rather than in `cargo test`.
+
+### Privilege
+
+| Property | State |
+|---|---|
+| Runs elevated | **Never.** No manifest requests it, and the installer is per-user |
+| `SeDebugPrivilege` | **Never enabled.** Nothing in the codebase calls `AdjustTokenPrivileges` |
+| Widest handle requested | `PROCESS_QUERY_LIMITED_INFORMATION`, plus `PROCESS_TERMINATE` for one operation |
+| Raw device access | `CreateFileW` with desired access **0** — enough for one IOCTL, not enough to read a byte |
+| Tauri capabilities | `core:default` only. No filesystem, shell, http or dialog plugin |
+
+Running unelevated is a limit as well as a promise: LocalDocks can only see
+processes the current user owns. That is why the service model can use "has a
+row" as the ownership test without a token lookup — measured on a development
+machine as 215 openable processes, 214 owned by the user.
+
+### Panics
+
+Two `expect` calls exist in production code and no others. Both are at startup,
+before any window appears, and both are unrecoverable by construction: the Tauri
+application failing to build, and the OS refusing to start the sampler thread.
+There is no `unwrap`, `panic!`, `todo!`, `unimplemented!`, `dbg!` or `println!`
+on any path a command can reach.
+
+### Logging
+
+Release writes Warn and above to one rotating 512 KB file in
+`%LOCALAPPDATA%\com.silentminds.localdocks\logs`. Debug writes Info to stdout
+and the webview console.
+
+Executable names, PIDs, port numbers and Windows error text can reach the file.
+Command lines, file paths and working directories cannot — they are read for the
+detail panel and the classifier, and neither logs at warn or above.
+
+Nothing is transmitted. There is no network client in the dependency tree.
+
+---
+
 ## Error taxonomy
 
 System calls fail routinely and most failures are **normal**, not exceptional.

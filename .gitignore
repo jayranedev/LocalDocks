@@ -68,6 +68,15 @@ $RECYCLE.BIN/
 .DS_Store
 
 # --------------------------------------------------------------
+# Release-hardening scratch
+#
+# Build logs, measurement output and packaging scratch produced while
+# validating a release candidate. Reproducible from the scripts in
+# docs/RELEASE.md, so it is evidence rather than source.
+# --------------------------------------------------------------
+.release/
+
+# --------------------------------------------------------------
 # Logs / test output
 # --------------------------------------------------------------
 *.log

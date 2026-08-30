@@ -358,6 +358,39 @@ snapshot that is otherwise complete.
 
 ---
 
+### 4f · One version, one place
+
+**IMPLEMENTED.** `src-tauri/Cargo.toml`'s `[package] version` is the only
+version number in the repository.
+
+`tauri.conf.json` deliberately has no `version` key, because Tauri falls back to
+Cargo's; `package.json` has none either, because it is private, never published,
+and a number there could only ever drift. So one edit propagates to the crate,
+the Windows file metadata, the installer filename, the uninstall entry and the
+bundle at once.
+
+A Windows package version must be plain numeric — `Major.Minor.Build.Revision` —
+so a pre-release marker cannot live in it. It lives in the git tag (`v0.9.0`)
+and the GitHub release's pre-release flag instead. That is why a release
+candidate carries a `0.x` number rather than `1.0.0` with a suffix the package
+format cannot express.
+
+---
+
+### 4g · The shipped binary is named after the product
+
+**IMPLEMENTED.** A `[[bin]]` section names the executable `LocalDocks`.
+
+The scaffold's crate name was `app`, and a crate name reaches the user: cargo
+prints it, and without an explicit `[[bin]]` it is also what the installed
+executable is called. LocalDocks would have shipped as `app.exe` — and, being a
+process monitor, would then have listed *itself* in its own Processes table as
+`app.exe`. Tauri offers a `mainBinaryName` override, but its own documentation
+prefers fixing this at the Cargo level, which also means there is no rename step
+between the build and the bundle that could disagree.
+
+---
+
 ### 5 · Endpoints are plural, and identity is not the port
 
 A dev server routinely binds `127.0.0.1:5173`, `[::1]:5173` and sometimes
@@ -424,6 +457,13 @@ The decisions above are all **IMPLEMENTED** as described, with one exception
 noted in decision 4: the tier-2 *working directory* field is **DEFERRED**, and
 renders as `unavailable` rather than being guessed. See docs/BACKEND.md.
 
+**Implemented is not the same as release-ready.** docs/ROADMAP.md carries a
+separate **RELEASE-READY** marker for behaviour that has additionally been
+validated in a packaged build rather than only in `cargo test` and
+`tauri dev` — because a decision can be correctly implemented and still fail
+once it is installed, and several release-hardening findings were exactly
+that.
+
 ---
 
 ### Future architecture — documented, not built
@@ -483,7 +523,7 @@ Four constraints, fixed now:
 
 ## IPC contract
 
-### Implemented by the frontend, awaited from Rust
+### The five commands and two events
 
 ```
 commands

@@ -13,6 +13,7 @@ as it actually is, not as it is hoped to be.
 | Marker | Meaning |
 |---|---|
 | **IMPLEMENTED** | Built, tested, and running in the app today |
+| **RELEASE-READY** | Additionally validated in a packaged, installed build — not only in `cargo test` and `tauri dev` |
 | **IN PROGRESS** | Partially built; the gap is named where it appears |
 | **PLANNED** | Agreed for a named version; not started |
 | **DEFERRED** | Wanted, but blocked on something named — not silently dropped |
@@ -477,14 +478,24 @@ do in a hurry.
 
 Before making it public, in order:
 
-1. Security audit of every command reachable from the frontend
-2. Git history audit — every commit, not just the tip
-3. Secrets scan across the full history
-4. Dependency and licence review
-5. Microsoft Store package review
-6. Documentation review against the actual repository
-7. Screenshot sanitisation — real machines contain real names
-8. Release build verification
+| # | Step | Status |
+|---|---|---|
+| 1 | Security audit of every command reachable from the frontend | **DONE** — see docs/RELEASE.md |
+| 2 | Git history audit — every commit, not just the tip | **PARTIAL** — the tip is clean; one finding remains in history, below |
+| 3 | Secrets scan across the full history | **PARTIAL** — same finding |
+| 4 | Dependency and licence review | **DONE** — 6 Rust and 5 runtime npm dependencies, all MIT / Apache-2.0 / OFL-1.1 |
+| 5 | Microsoft Store package review | **BLOCKED** — Tauri produces NSIS, not MSIX; see docs/RELEASE.md |
+| 6 | Documentation review against the actual repository | **DONE** |
+| 7 | Screenshot sanitisation — real machines contain real names | **NOT STARTED** — no screenshots exist yet |
+| 8 | Release build verification | **DONE** — see docs/RELEASE.md |
+
+**The one history finding.** A classifier test carried a real command line
+captured from the development machine, including the private project directory
+it came from. The working tree was sanitised in `a369a94`, but the original
+string is still reachable in commit `1339aae`. Removing it entirely means
+rewriting history on a branch that has already been pushed. That is a decision
+for the moment the repository is made public, and it is recorded here rather
+than quietly left.
 
 Then: public GitHub → GitHub release → Microsoft Store release → website.
 
